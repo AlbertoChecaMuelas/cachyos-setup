@@ -1,0 +1,10 @@
+[Unit]
+Description=Comprueba versiones de omarchy semanalmente
+
+[Timer]
+OnCalendar=Sun *-*-* 10:30:00
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

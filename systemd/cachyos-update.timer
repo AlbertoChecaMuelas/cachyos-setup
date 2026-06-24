@@ -1,0 +1,10 @@
+[Unit]
+Description=Actualiza el sistema CachyOS semanalmente
+
+[Timer]
+OnCalendar=Sun *-*-* 10:00:00
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

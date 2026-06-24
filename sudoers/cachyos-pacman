@@ -1,0 +1,1 @@
+espinilleitor ALL=(root) NOPASSWD: /usr/bin/pacman -Syu --noconfirm

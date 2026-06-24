@@ -1,0 +1,9 @@
+[Unit]
+Description=Comprueba nuevas versiones de omarchy-on-cachyos
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus
+ExecStart=%h/repos/cachyos-setup/scripts/check-omarchy-update.sh
