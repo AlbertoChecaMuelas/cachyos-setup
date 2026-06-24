@@ -58,8 +58,6 @@ if git ls-remote --tags --exit-code origin "refs/tags/${TAG}" >/dev/null 2>&1; t
 fi
 
 CURRENT_SHA="$(git rev-parse HEAD)"
-git config --local user.email "ci-bot@cachyos-setup"
-git config --local user.name "cachyos-ci-bot"
 
 if [[ -n "${GITHUB_TOKEN:-}" && -n "${GITHUB_REPOSITORY:-}" ]]; then
   git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
