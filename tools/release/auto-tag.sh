@@ -65,6 +65,29 @@ fi
 
 git tag -a "${TAG}" -m "Release ${TAG}" "${CURRENT_SHA}"
 
+# Cerrar [Unreleased] en CHANGELOG.md
+TODAY="$(date -u +%Y-%m-%d)"
+CHANGELOG="$(git rev-parse --show-toplevel)/CHANGELOG.md"
+if [[ -f "$CHANGELOG" ]] && grep -q '## \[Unreleased\]' "$CHANGELOG"; then
+  awk -v tag="$TAG" -v date="$TODAY" '
+    /^## \[Unreleased\]$/ {
+      print "## [Unreleased]\n"
+      print "## [" substr(tag,2) "] - " date
+      next
+    }
+    { print }
+  ' "$CHANGELOG" > "$CHANGELOG.tmp" && mv "$CHANGELOG.tmp" "$CHANGELOG"
+  if [[ "${DRY_RUN}" -eq 0 ]]; then
+    git config --local user.email "ci-bot@cachyos-setup"
+    git config --local user.name "cachyos-ci-bot"
+    git add "$CHANGELOG"
+    git commit -m "docs(changelog): close [Unreleased] as $TAG [skip ci]"
+    git push origin HEAD:master
+    git config --local --unset user.email || true
+    git config --local --unset user.name || true
+  fi
+fi
+
 if [[ "${DRY_RUN}" -eq 1 ]]; then
   echo "auto-tag: --dry-run set; skipping push"
   exit 0
