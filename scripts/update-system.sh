@@ -8,6 +8,7 @@ notify() { notify-send --app-name="CachyOS Update" --urgency="$1" "$2" "$3"; }
 echo "===== Actualización: $(date '+%Y-%m-%d %H:%M:%S') =====" > "$LOG_FILE"
 notify normal "Actualizando sistema..." "pacman + yay en marcha"
 echo "--- pacman -Syu ---" >> "$LOG_FILE"
+# shellcheck disable=SC2024
 if ! sudo pacman -Syu --noconfirm >> "$LOG_FILE" 2>&1; then
     notify critical "Error al actualizar (pacman)" "Revisa $LOG_FILE"; exit 1
 fi
