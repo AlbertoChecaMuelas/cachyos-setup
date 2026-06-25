@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Manual semver tag override (e.g. 1.4.0). Leave empty for auto."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Shellcheck all shell files
+        run: |
+          find . -name "*.sh" -not -path "./.git/*" -print0 \
+            | xargs -0 -r shellcheck --severity=warning
+
+      - name: Bash syntax check (bash -n)
+        run: |
+          set -e
+          find . -name "*.sh" -not -path "./.git/*" -print0 \
+            | while IFS= read -r -d '' f; do
+                echo "bash -n $f"
+                bash -n "$f"
+              done
+
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate sudoers file (visudo -cf)
+        run: |
+          for f in sudoers/*; do
+            echo "visudo -cf $f"
+            sudo visudo -cf "$f"
+          done
+
+      - name: Validate systemd unit files (advisory)
+        continue-on-error: true
+        run: |
+          systemd-analyze verify systemd/*.service systemd/*.timer || true
+
+  bats:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run bats tests if present
+        run: |
+          if ls tests/*.bats >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y bats
+            bats tests/
+          else
+            echo "No tests/*.bats found; skipping."
+          fi
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [lint, validate]
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' &&
+       github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Auto-tag release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MANUAL_VERSION: ${{ github.event.inputs.version }}
+        run: bash tools/release/auto-tag.sh
