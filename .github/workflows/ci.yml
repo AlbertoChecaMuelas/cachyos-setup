@@ -86,4 +86,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MANUAL_VERSION: ${{ github.event.inputs.version }}
-        run: bash tools/release/auto-tag.sh
+        run: |
+          git config --global user.name "cachyos-ci-bot"
+          git config --global user.email "ci-bot@cachyos-setup"
+          bash tools/release/auto-tag.sh
