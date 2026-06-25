@@ -7,20 +7,7 @@ y este proyecto usa [versionado semántico](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
-### Added
-- add create-pr flow (changelog, PR description, auto-tag close)
-
 ### Fixed
-- make changelog-close best-effort and skip empty [Unreleased]
-- remove local git config override from auto-tag (only CI should set it)
-- suppress SC2024 on user-owned log redirect
-
-
-### Added
-- add create-pr flow (changelog, PR description, auto-tag close)
-
-### Fixed
-- make changelog-close best-effort and skip empty [Unreleased]
-- remove local git config override from auto-tag (only CI should set it)
-- suppress SC2024 on user-owned log redirect
+- quote ExecStart paths to handle spaces in clone path
+- resolve systemd unit script paths from clone location
 
