@@ -86,6 +86,8 @@ FIXED=""
 
 while IFS= read -r SUBJECT; do
   [[ -z "${SUBJECT}" ]] && continue
+  # Skip the changelog script's own commit and its auto-tag close variant.
+  [[ "${SUBJECT}" == docs\(changelog\):* ]] && continue
 
   case "${SUBJECT}" in
     feat:*|feat\(*\):*|feature:*|feature\(*\):*)
@@ -175,11 +177,47 @@ TMP_BLOCK="$(mktemp)"
 TMP_CL="$(mktemp)"
 trap 'rm -f "${TMP_BLOCK}" "${TMP_CL}"' EXIT
 
-printf '%s\n' "${NEW_BLOCK}" > "${TMP_BLOCK}"
-
-# Detect whether [Unreleased] already exists.
+# Detect whether [Unreleased] already exists and build the final block.
 if grep -q '^## \[Unreleased\]' "${CHANGELOG}"; then
-  # Insert new block immediately after the ## [Unreleased] heading line.
+  # ------------------------------------------------------------------
+  # Idempotent upsert: read prior [Unreleased] body, dedup at bullet
+  # level, then overwrite the body with fresh content + survivors.
+  # ------------------------------------------------------------------
+
+  # Collect all bullet lines currently under [Unreleased].
+  PRIOR_BULLETS="$(awk '
+    /^## \[Unreleased\]/{f=1; next}
+    /^## /{f=0}
+    f && /^[[:space:]]*-[[:space:]]/{print}
+  ' "${CHANGELOG}")"
+
+  # Determine which prior bullets survive (not byte-identical to any new bullet).
+  SURVIVING=""
+  while IFS= read -r LINE; do
+    [[ -z "${LINE}" ]] && continue
+    if ! printf '%s\n' "${NEW_BLOCK}" | grep -qxF -- "${LINE}"; then
+      if [[ -n "${SURVIVING}" ]]; then
+        SURVIVING="${SURVIVING}
+${LINE}"
+      else
+        SURVIVING="${LINE}"
+      fi
+    fi
+  done <<EOF
+${PRIOR_BULLETS}
+EOF
+
+  # Final body = new block + surviving prior bullets (if any).
+  FINAL_BLOCK="${NEW_BLOCK}"
+  if [[ -n "${SURVIVING}" ]]; then
+    FINAL_BLOCK="${FINAL_BLOCK}
+${SURVIVING}
+"
+  fi
+
+  printf '%s\n' "${FINAL_BLOCK}" > "${TMP_BLOCK}"
+
+  # Replace the entire [Unreleased] body: skip old body lines until next ## section.
   awk -v blockfile="${TMP_BLOCK}" '
     /^## \[Unreleased\]/ {
       print
@@ -188,15 +226,17 @@ if grep -q '^## \[Unreleased\]' "${CHANGELOG}"; then
         print line
       }
       close(blockfile)
-      # Skip any immediately following blank line(s) to avoid double-blank
-      # between new block and old content — but we actually want to keep them,
-      # so just print whatever comes next verbatim.
+      skip=1
       next
     }
+    skip && /^## / { skip=0 }
+    skip { next }
     { print }
   ' "${CHANGELOG}" > "${TMP_CL}"
 else
-  # No [Unreleased] section. Insert after the first "# " title line.
+  # No [Unreleased] section yet: insert after the first "# " title line.
+  printf '%s\n' "${NEW_BLOCK}" > "${TMP_BLOCK}"
+
   awk -v blockfile="${TMP_BLOCK}" '
     !inserted && /^# / {
       print
