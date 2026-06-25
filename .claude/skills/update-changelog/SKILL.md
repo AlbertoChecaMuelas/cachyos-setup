@@ -25,7 +25,7 @@ $ARGUMENTS
 
 When `$ARGUMENTS` starts with `--branch `, run the deterministic script and report its output. Do NOT read, classify, or rewrite the changelog yourself.
 
-!`$(git rev-parse --show-toplevel)/tools/release/update-changelog.sh --branch "${ARGUMENTS#--branch }"`
+!`$(git rev-parse --show-toplevel)/tools/release/update-changelog.sh $ARGUMENTS`
 
 The script:
 - Validates `<base>` exists (prints `update-changelog: base '<base>' does not exist` and exits 2 if not).
