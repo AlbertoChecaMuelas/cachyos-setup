@@ -29,7 +29,7 @@ When `$ARGUMENTS` starts with `--branch `, run the deterministic script and repo
 
 The script:
 - Validates `<base>` exists (prints `update-changelog: base '<base>' does not exist` and exits 2 if not).
-- Scans `git log <base>..HEAD --no-merges`, classifies by conventional prefix (feat/feature → Added, fix → Fixed, refactor/perf/docs → Changed, chore/build/ci/style/test/other → omitted), strips the prefix to form each bullet, and PREPENDS an `### Added/Changed/Fixed` block immediately under `## [Unreleased]` without touching any existing content.
+- Scans `git log <base>..HEAD --no-merges`, classifies by conventional prefix (feat/feature → Added, fix → Fixed, refactor/perf/docs → Changed, chore/build/ci/style/test/other → omitted), skips any `docs(changelog):` commits so they never become bullets, and performs an **idempotent upsert** into the single `## [Unreleased]` section: newly-computed bullets that already exist verbatim in the section are **de-duplicated** (not added again), while bullets accumulated from prior merged-but-unreleased PRs are **preserved** (accumulator model). Re-running the script does not duplicate content.
 - Exits 0 without modifying the file when there are no new commits or no user-facing commits.
 
 Report the script's stdout line to the user verbatim, then stop. Do not modify CHANGELOG.md by hand in this mode.
