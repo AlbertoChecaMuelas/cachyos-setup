@@ -7,7 +7,13 @@ y este proyecto usa [versionado semántico](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Changed
+- describe idempotent changelog upsert contract
+
 ### Fixed
+- ensure byte-stable output on first vs subsequent runs
+- preserve subsection headers for accumulated [Unreleased] entries
+- make branch-scoped changelog update idempotent
 - quote ExecStart paths to handle spaces in clone path
 - resolve systemd unit script paths from clone location
 

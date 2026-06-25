@@ -86,6 +86,8 @@ FIXED=""
 
 while IFS= read -r SUBJECT; do
   [[ -z "${SUBJECT}" ]] && continue
+  # Skip the changelog script's own commit and its auto-tag close variant.
+  [[ "${SUBJECT}" == docs\(changelog\):* ]] && continue
 
   case "${SUBJECT}" in
     feat:*|feat\(*\):*|feature:*|feature\(*\):*)
@@ -175,11 +177,130 @@ TMP_BLOCK="$(mktemp)"
 TMP_CL="$(mktemp)"
 trap 'rm -f "${TMP_BLOCK}" "${TMP_CL}"' EXIT
 
-printf '%s\n' "${NEW_BLOCK}" > "${TMP_BLOCK}"
-
-# Detect whether [Unreleased] already exists.
+# Detect whether [Unreleased] already exists and build the final block.
 if grep -q '^## \[Unreleased\]' "${CHANGELOG}"; then
-  # Insert new block immediately after the ## [Unreleased] heading line.
+  # ------------------------------------------------------------------
+  # Idempotent upsert: read prior [Unreleased] body with section context,
+  # dedup at bullet level, then reconstruct body grouped by subsection.
+  # ------------------------------------------------------------------
+  _tab=$'\t'
+
+  # Step A: Collect section+bullet pairs from existing [Unreleased] body.
+  # Each output line: "### Section Header<TAB>- bullet" (section may be empty).
+  PRIOR_PAIRS="$(awk '
+    BEGIN { section="" }
+    /^## \[Unreleased\]/{ f=1; next }
+    /^## /{ f=0 }
+    f && /^### /{ section=$0; next }
+    f && /^[[:space:]]*-[[:space:]]/{ print section "\t" $0 }
+  ' "${CHANGELOG}")"
+
+  # Step B: Distribute surviving bullets (not in NEW_BLOCK) into per-section vars.
+  SURV_ADDED=""
+  SURV_CHANGED=""
+  SURV_FIXED=""
+  SURV_OTHER_PAIRS=""  # "### NonStdHeader<TAB>- bullet" in appearance order
+  SURV_EMPTY=""        # bullets that had no preceding section header
+
+  while IFS="${_tab}" read -r _sec _bullet; do
+    [[ -z "${_bullet}" ]] && continue
+    # Global dedup: discard if byte-identical to any line in NEW_BLOCK.
+    if printf '%s\n' "${NEW_BLOCK}" | grep -qxF -- "${_bullet}"; then
+      continue
+    fi
+    case "${_sec}" in
+      "### Added")
+        SURV_ADDED="${SURV_ADDED:+${SURV_ADDED}
+}${_bullet}"
+        ;;
+      "### Changed")
+        SURV_CHANGED="${SURV_CHANGED:+${SURV_CHANGED}
+}${_bullet}"
+        ;;
+      "### Fixed")
+        SURV_FIXED="${SURV_FIXED:+${SURV_FIXED}
+}${_bullet}"
+        ;;
+      "")
+        SURV_EMPTY="${SURV_EMPTY:+${SURV_EMPTY}
+}${_bullet}"
+        ;;
+      *)
+        SURV_OTHER_PAIRS="${SURV_OTHER_PAIRS:+${SURV_OTHER_PAIRS}
+}${_sec}${_tab}${_bullet}"
+        ;;
+    esac
+  done <<EOF
+${PRIOR_PAIRS}
+EOF
+
+  # Build SURV_OTHER: group non-standard section bullets under their headers.
+  SURV_OTHER=""
+  if [[ -n "${SURV_OTHER_PAIRS}" ]]; then
+    _last_sec=""
+    while IFS="${_tab}" read -r _sec _bullet; do
+      [[ -z "${_bullet}" ]] && continue
+      if [[ "${_sec}" != "${_last_sec}" ]]; then
+        SURV_OTHER="${SURV_OTHER:+${SURV_OTHER}
+}${_sec}
+"
+        _last_sec="${_sec}"
+      fi
+      SURV_OTHER="${SURV_OTHER}${_bullet}
+"
+    done <<EOF
+${SURV_OTHER_PAIRS}
+EOF
+  fi
+
+  # Step C: Reconstruct FINAL_BLOCK in canonical order (Added → Changed → Fixed),
+  # followed by non-standard section survivors, then empty-section survivors.
+  FINAL_BLOCK=""
+  _need_sep=0
+
+  _append_section() {
+    local _hdr="$1" _new="$2" _surv="$3"
+    [[ -z "${_new}" && -z "${_surv}" ]] && return
+    if [[ "${_need_sep}" -eq 1 ]]; then
+      FINAL_BLOCK="${FINAL_BLOCK}
+"
+    fi
+    FINAL_BLOCK="${FINAL_BLOCK}${_hdr}
+"
+    [[ -n "${_new}" ]]  && FINAL_BLOCK="${FINAL_BLOCK}${_new}
+"
+    [[ -n "${_surv}" ]] && FINAL_BLOCK="${FINAL_BLOCK}${_surv}
+"
+    _need_sep=1
+  }
+
+  _append_section "### Added"   "${ADDED}"   "${SURV_ADDED}"
+  _append_section "### Changed" "${CHANGED}" "${SURV_CHANGED}"
+  _append_section "### Fixed"   "${FIXED}"   "${SURV_FIXED}"
+
+  # Append non-standard survivor sections verbatim (includes their own headers).
+  if [[ -n "${SURV_OTHER}" ]]; then
+    if [[ "${_need_sep}" -eq 1 ]]; then
+      FINAL_BLOCK="${FINAL_BLOCK}
+"
+    fi
+    FINAL_BLOCK="${FINAL_BLOCK}${SURV_OTHER}"
+    _need_sep=1
+  fi
+
+  # Empty-section survivor bullets at the very end, flat (no header).
+  if [[ -n "${SURV_EMPTY}" ]]; then
+    if [[ "${_need_sep}" -eq 1 ]]; then
+      FINAL_BLOCK="${FINAL_BLOCK}
+"
+    fi
+    FINAL_BLOCK="${FINAL_BLOCK}${SURV_EMPTY}
+"
+  fi
+
+  printf '%s\n' "${FINAL_BLOCK}" > "${TMP_BLOCK}"
+
+  # Replace the entire [Unreleased] body: skip old body lines until next ## section.
   awk -v blockfile="${TMP_BLOCK}" '
     /^## \[Unreleased\]/ {
       print
@@ -188,15 +309,17 @@ if grep -q '^## \[Unreleased\]' "${CHANGELOG}"; then
         print line
       }
       close(blockfile)
-      # Skip any immediately following blank line(s) to avoid double-blank
-      # between new block and old content — but we actually want to keep them,
-      # so just print whatever comes next verbatim.
+      skip=1
       next
     }
+    skip && /^## / { skip=0 }
+    skip { next }
     { print }
   ' "${CHANGELOG}" > "${TMP_CL}"
 else
-  # No [Unreleased] section. Insert after the first "# " title line.
+  # No [Unreleased] section yet: insert after the first "# " title line.
+  printf '%s\n' "${NEW_BLOCK}" > "${TMP_BLOCK}"
+
   awk -v blockfile="${TMP_BLOCK}" '
     !inserted && /^# / {
       print
@@ -208,9 +331,11 @@ else
       }
       close(blockfile)
       inserted = 1
+      skip_blank = 1
       next
     }
-    { print }
+    skip_blank && /^[[:space:]]*$/ { skip_blank = 0; next }
+    { skip_blank = 0; print }
   ' "${CHANGELOG}" > "${TMP_CL}"
 fi
 
