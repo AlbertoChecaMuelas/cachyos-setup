@@ -180,11 +180,6 @@ trap 'rm -f "${TMP_BLOCK}" "${TMP_CL}"' EXIT
 # Detect whether [Unreleased] already exists and build the final block.
 if grep -q '^## \[Unreleased\]' "${CHANGELOG}"; then
   # ------------------------------------------------------------------
-  # Idempotent upsert: read prior [Unreleased] body, dedup at bullet
-  # level, then overwrite the body with fresh content + survivors.
-  # ------------------------------------------------------------------
-
-  # ------------------------------------------------------------------
   # Idempotent upsert: read prior [Unreleased] body with section context,
   # dedup at bullet level, then reconstruct body grouped by subsection.
   # ------------------------------------------------------------------
