@@ -331,9 +331,11 @@ else
       }
       close(blockfile)
       inserted = 1
+      skip_blank = 1
       next
     }
-    { print }
+    skip_blank && /^[[:space:]]*$/ { skip_blank = 0; next }
+    { skip_blank = 0; print }
   ' "${CHANGELOG}" > "${TMP_CL}"
 fi
 
