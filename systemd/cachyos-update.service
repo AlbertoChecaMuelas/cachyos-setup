@@ -6,4 +6,5 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus
+ExecStartPre=/usr/bin/nm-online -q --timeout=60
 ExecStart="@SCRIPTS_DIR@/update-system.sh"
