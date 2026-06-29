@@ -11,6 +11,7 @@ y este proyecto usa [versionado semántico](https://semver.org/lang/es/).
 - describe idempotent changelog upsert contract
 
 ### Fixed
+- usar @USER@ para portabilidad entre usuarios
 - esperar conectividad real antes de actualizar
 - ensure byte-stable output on first vs subsequent runs
 - preserve subsection headers for accumulated [Unreleased] entries
