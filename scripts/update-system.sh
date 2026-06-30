@@ -8,6 +8,10 @@ LOG_FILE="$STATE_DIR/update.log"
 # mantiene $LOG_FILE con >> (acumulativo historico) para diagnostico.
 CURRENT_RUN_LOG="$STATE_DIR/current-run.log"
 SUMMARY_FILE="$STATE_DIR/last-summary.txt"
+# Repo local donde aur sync deposita los paquetes AUR para que el
+# pacman -Syu posterior los instale. Debe coincidir con el path
+# configurado por install.sh.
+AUR_REPO_DIR="/var/lib/aur-repo"
 mkdir -p "$STATE_DIR"
 : > "$CURRENT_RUN_LOG"
 
@@ -50,6 +54,11 @@ write_summary() {
         printf '%s\n' "$title"
         printf '%s\n' "$body"
     } > "$SUMMARY_FILE"
+    # El servicio system-level corre como root; el usuario que inicia
+    # sesion grafica (no root) debe poder leer este fichero para que
+    # show-update-summary.sh (autostart) lo muestre y borre. Forzar
+    # 644 explicitamente.
+    chmod 644 "$SUMMARY_FILE" 2>/dev/null || true
 }
 
 echo "" >> "$LOG_FILE"
@@ -69,7 +78,13 @@ if [[ -n "${CACHYOS_USER:-}" && -z "${SUDO_USER:-}" ]] && [[ -z "$RUN_AS" ]]; th
     aur_failed=1
 elif command -v aur >/dev/null 2>&1; then
     echo "--- aur sync -u ---" >> "$LOG_FILE"
-    if run_as timeout 1800 aur sync -u --noconfirm --no-view \
+    # --noinstall: solo construir, NO instalar. La instalacion la hace
+    # el pacman -Syu posterior desde el repo local. Asi evitamos que
+    # aurutils invoque sudo internamente (falla sin TTY).
+    # --localrepo: aurutils usa por defecto ~/.cache/aursync; lo
+    # forzamos a /var/lib/aur-repo (registrado en pacman.conf) para
+    # que pacman -Syu resuelva desde ahi.
+    if run_as timeout 1800 aur sync -u --noconfirm --no-view --noinstall --localrepo "$AUR_REPO_DIR" \
             > >(tee -a "$LOG_FILE" >> "$CURRENT_RUN_LOG") 2>&1; then
         # aur sync imprime ':: Sincronizando paquetes AUR...' seguido de
         # ':: Starting build de <pkg>...'. Extraemos los nombres de
