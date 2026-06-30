@@ -56,6 +56,42 @@ La compilación se hace como `$TARGET_USER` (no como root) para que
 `aur` no se queje, y se ejecuta ANTES de `pacman -Syu` para que el
 repo local esté actualizado cuando pacman resuelva.
 
+## Gestión de paquetes AUR
+
+`aurutils` **no descubre automáticamente** los paquetes AUR instalados en el
+sistema: hay que registrarlos explícitamente en el repo local una sola vez.
+A partir de ese momento el servicio `cachyos-update` los actualizará cada
+domingo sin intervención manual.
+
+### Primera vez (instalación nueva o migración)
+
+Localiza los paquetes AUR que ya tienes instalados y añádelos al repo local:
+
+```bash
+# Ver qué paquetes AUR tienes instalados
+pacman -Qm
+
+# Añadirlos al repo local (una sola vez por paquete)
+aur sync --noconfirm --no-view paquete1 paquete2 ...
+```
+
+### Añadir un paquete AUR nuevo en el futuro
+
+Instala el paquete con tu helper habitual y luego regístralo en el repo local:
+
+```bash
+yay -S nuevo-paquete
+aur sync --noconfirm --no-view nuevo-paquete
+```
+
+A partir de ese momento el servicio lo actualizará automáticamente cada domingo.
+
+### Ver qué paquetes AUR se están gestionando
+
+```bash
+pacman -Sl aur-local
+```
+
 ## Logs
 
 - Ejecución automática (timer): `/var/lib/cachyos-setup/`

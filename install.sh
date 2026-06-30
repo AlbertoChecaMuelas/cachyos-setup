@@ -4,7 +4,8 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 SYSTEMD_SYSTEM_DIR="/etc/systemd/system"
 SCRIPTS_DIR="$REPO_DIR/scripts"
-TARGET_USER="$USER"
+TARGET_USER="${SUDO_USER:-$USER}"
+TARGET_HOME=$(getent passwd "$TARGET_USER" | cut -d: -f6)
 chmod +x "$REPO_DIR"/scripts/*.sh "$REPO_DIR"/install.sh
 
 # ---- State dir para ejecucion manual (user-level) ----
@@ -25,18 +26,37 @@ if [ -f /etc/sudoers.d/cachyos-pacman ]; then
 fi
 
 # ---- AUR: aurutils + repo local para actualizacion automatica ----
-# aur sync compila paquetes AUR y los deposita en un repo local; pacman
-# los instala junto a los oficiales en el mismo pacman -Syu. La
-# instalacion de aurutils se hace con pacman (oficial) en lugar de AUR
-# para evitar recursividad en el primer despliegue.
-if ! command -v aur >/dev/null 2>&1; then
-    sudo pacman -S --needed --noconfirm aurutils
-fi
+# aurutils NO esta en repos oficiales, hay que bootstrappear desde AUR.
+# Si ya hay un helper AUR (yay/paru) lo usamos; si no, compilamos
+# aurutils con makepkg (aseguramos base-devel + git si faltan). Tras
+# instalarlo, configuramos un repo local /var/lib/aur-repo/ donde
+# aur sync deposita los paquetes y pacman -Syu los resuelve como
+# cualquier repo.
 AUR_REPO_DIR="/var/lib/aur-repo"
+if ! command -v aur >/dev/null 2>&1; then
+    if command -v yay >/dev/null 2>&1; then
+        su - "$TARGET_USER" -c "yay -S --noconfirm --needed aurutils"
+    elif command -v paru >/dev/null 2>&1; then
+        su - "$TARGET_USER" -c "paru -S --noconfirm --needed aurutils"
+    else
+        # Sin helper AUR: bootstrap directo con makepkg.
+        if ! pacman -Qg base-devel | grep -q .; then
+            sudo pacman -S --needed --noconfirm base-devel
+        fi
+        command -v git >/dev/null 2>&1 || sudo pacman -S --needed --noconfirm git
+        su - "$TARGET_USER" <<'INNER'
+set -e
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+git clone https://aur.archlinux.org/aurutils.git "$tmpdir/aurutils"
+(cd "$tmpdir/aurutils" && makepkg -si --noconfirm --needed)
+INNER
+    fi
+fi
 sudo mkdir -p "$AUR_REPO_DIR"
 sudo chown "$TARGET_USER":"$TARGET_USER" "$AUR_REPO_DIR"
 if ! ls "$AUR_REPO_DIR"/aur-local.db.tar.gz >/dev/null 2>&1; then
-    sudo -u "$TARGET_USER" repo-add "$AUR_REPO_DIR/aur-local.db.tar.gz"
+    sudo -u "$TARGET_USER" bash -c "cd '$AUR_REPO_DIR' && bsdtar -czf aur-local.db.tar.gz -T /dev/null && ln -sf aur-local.db.tar.gz aur-local.db"
 fi
 if ! grep -q '^\[aur-local\]' /etc/pacman.conf; then
     sudo tee -a /etc/pacman.conf > /dev/null <<EOF
@@ -54,20 +74,23 @@ if [ -f "$HOME/.config/systemd/user/cachyos-update.timer" ]; then
     systemctl --user disable --now cachyos-update.timer 2>/dev/null || true
     rm -f "$HOME/.config/systemd/user/cachyos-update.service" \
           "$HOME/.config/systemd/user/cachyos-update.timer"
-    systemctl --user daemon-reload
+    systemctl --user daemon-reload 2>/dev/null || true
 fi
 
 # ---- Autostart: mostrar resumen persistente de updates al iniciar sesion ----
 # Cuando el timer corre sin sesion grafica, las notificaciones se
 # persisten en $STATE_DIR/last-summary.txt. Este script de autostart lo
 # muestra al iniciar sesion y luego lo borra para no repetirlo.
-AUTOSTART_DIR="$HOME/.config/autostart"
+# El STATE_DIR debe coincidir con el del unit system-level (que fija
+# CACHYOS_SETUP_STATE_DIR=/var/lib/cachyos-setup); si no, el script
+# busca en ~/.local/state/... y nunca encuentra el summary.
+AUTOSTART_DIR="$TARGET_HOME/.config/autostart"
 mkdir -p "$AUTOSTART_DIR"
 cat > "$AUTOSTART_DIR/cachyos-update-summary.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=CachyOS Update Summary
-Exec=$SCRIPTS_DIR/show-update-summary.sh
+Exec=env CACHYOS_SETUP_STATE_DIR=/var/lib/cachyos-setup "$SCRIPTS_DIR/show-update-summary.sh"
 X-GNOME-Autostart-enabled=true
 NoDisplay=false
 EOF
@@ -82,8 +105,14 @@ for unit in "$REPO_DIR"/systemd/user/*.service "$REPO_DIR"/systemd/user/*.timer;
     rm -f "$target"
     sed "s|@SCRIPTS_DIR@|$SCRIPTS_DIR|g" "$unit" > "$target"
 done
-systemctl --user daemon-reload
-systemctl --user enable --now omarchy-check.timer
+# These calls may fail when there is no active user systemd session (e.g. running
+# via sudo without a logged-in desktop session). The unit files are already installed
+# correctly in ~/.config/systemd/user/. To activate them manually from a user
+# session run:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now omarchy-check.timer
+systemctl --user --machine="$TARGET_USER@.host" daemon-reload || true
+systemctl --user --machine="$TARGET_USER@.host" enable --now omarchy-check.timer || true
 
 # ---- system-level units (cachyos-update, run as root) ----
 USER_UID="$(id -u "$USER")"
