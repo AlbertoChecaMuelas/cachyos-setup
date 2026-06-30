@@ -8,6 +8,7 @@ y este proyecto usa [versionado semántico](https://semver.org/lang/es/).
 ## [Unreleased]
 
 ### Added
+- notif. utiles, logs acumulativos, AUR manual y service system-level
 - notificar listado de paquetes relevantes al actualizar (kernel, nvidia, systemd, glibc, openssl, mesa, xorg-server, wayland)
 - detectar servicios pendientes de reiniciar via `needrestart` (AUR opcional) tras actualizar
 - log acumulativo entre ejecuciones, con cabecera por fecha
@@ -26,6 +27,10 @@ y este proyecto usa [versionado semántico](https://semver.org/lang/es/).
 - README y PATH de notificaciones asumen que el script puede ejecutarse con TTY.
 
 ### Fixed
+- usar TARGET_USER/HOME bajo sudo y documentar AUR automático
+- configurar AUR automático y permisos de resumen
+- corregir instalación aurutils y setup repo local
+- corregir bugs críticos pre-merge y añadir AUR automático con aurutils
 - notification suprimida cuando `pacman -Syu` no actualiza nada (antes enviaba "0 paquetes actualizados" como ruido).
 - `omarchy-check` escribe `OK: al dia` en log cuando la version local coincide con upstream, sin enviar notify.
 - handle sudoers generico via `@USER@` para que la instalacion sea portable entre usuarios.
