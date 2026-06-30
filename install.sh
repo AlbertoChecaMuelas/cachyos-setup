@@ -135,6 +135,29 @@ done
 sudo systemctl daemon-reload
 sudo systemctl enable --now cachyos-update.timer
 
+# ---- Bootloader: NVIDIA KMS cmdline ----
+# Activa nvidia-drm.modeset=1 de forma persistente via drop-in de
+# limine-entry-tool. Idempotente: solo regenera limine.conf si el
+# drop-in cambia. En maquinas sin Limine se omite sin abortar.
+if command -v limine-update >/dev/null 2>&1; then
+    src="$REPO_DIR/etc/limine-entry-tool.d/nvidia.conf"
+    dst="/etc/limine-entry-tool.d/nvidia.conf"
+    if [ -f "$src" ]; then
+        sudo install -d -m 0755 /etc/limine-entry-tool.d
+        if ! sudo cmp -s "$src" "$dst"; then
+            sudo install -m 0644 "$src" "$dst"
+            sudo limine-update
+            echo "Drop-in NVIDIA KMS instalado y limine.conf regenerado."
+        else
+            echo "Drop-in NVIDIA KMS ya actualizado; nada que hacer."
+        fi
+    else
+        echo "Drop-in NVIDIA KMS no presente en el repo; se omite."
+    fi
+else
+    echo "limine-update no encontrado; se omite el drop-in NVIDIA KMS."
+fi
+
 echo "Listo. Timers:"
 echo "  systemctl --user list-timers      (omarchy-check)"
 echo "  systemctl list-timers --all       (cachyos-update)"
