@@ -6,7 +6,7 @@ STATE_DIR="$HOME/.local/state/cachyos-setup"
 LOG_FILE="$STATE_DIR/omarchy-check.log"
 export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus}"
 mkdir -p "$STATE_DIR"
-notify() { notify-send --app-name="Omarchy" --urgency="$1" "$2" "$3"; }
+notify() { notify-send --app-name="Omarchy" --urgency="$1" "$2" "$3" || true; }
 echo "" >> "$LOG_FILE"
 echo "===== Check omarchy: $(date '+%Y-%m-%d %H:%M:%S') =====" >> "$LOG_FILE"
 if [[ ! -d "$OMARCHY_DIR/.git" ]]; then echo "No existe $OMARCHY_DIR" >> "$LOG_FILE"; exit 0; fi

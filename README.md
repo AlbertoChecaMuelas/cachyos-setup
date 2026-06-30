@@ -4,16 +4,16 @@ Scripts de automatización para CachyOS + omarchy.
 
 ## Qué hace
 
-- Actualización semanal del sistema (paquetes oficiales) con notificaciones de escritorio.
+- Actualización semanal del sistema (paquetes oficiales y AUR) con notificaciones de escritorio.
 - Aviso de reinicio si se actualiza el kernel o nvidia.
 - Aviso de nueva versión de omarchy-on-cachyos (no se instala sola).
-- Aviso cuando hay paquetes AUR pendientes (la actualización AUR se hace manual con `yay -Syu` desde terminal — ver "Limitación de paquetes AUR" abajo).
+- Resumen persistente: si el timer corre sin sesión gráfica, la notificación queda guardada y se muestra al iniciar sesión.
 
 ## Requisitos
 
 - CachyOS
 - Hyprland + mako (servidor de notificaciones)
-- yay
+- [aurutils](https://aur.archlinux.org/packages/aurutils/) — instalado automáticamente por `./install.sh` desde los repos oficiales.
 - libnotify (notify-send)
 - [needrestart](https://aur.archlinux.org/packages/needrestart/) (recomendado,
   AUR) — para notificar servicios pendientes de reiniciar tras actualizar
@@ -29,6 +29,13 @@ cd cachyos-setup
 ./install.sh
 ```
 
+`./install.sh` configura de forma idempotente:
+
+- aurutils + repo local `/var/lib/aur-repo/` con base de datos `aur-local`.
+- Sección `[aur-local]` en `/etc/pacman.conf` apuntando a `file:///var/lib/aur-repo`.
+- Script de autostart `~/.config/autostart/cachyos-update-summary.desktop`
+  que muestra el resumen pendiente al iniciar sesión.
+
 ## Uso manual
 
 ```bash
@@ -37,45 +44,37 @@ sudo systemctl start cachyos-update.service
 
 (También puedes lanzar el script directamente: `sudo ./scripts/update-system.sh`).
 
-Para actualizar paquetes AUR manualmente (la actualización automática
-no los cubre; ver abajo):
+## Actualización AUR automática
 
-```bash
-sudo yay -Syu
-```
+El ciclo de actualización usa `aur sync` (aurutils) para compilar los
+paquetes AUR y depositarlos en el repo local `/var/lib/aur-repo/`.
+Después, el `pacman -Syu` resuelve e instala tanto los oficiales
+como los AUR en un solo paso. No hace falta ejecutar `yay -Syu`
+manualmente.
 
-## Limitación de paquetes AUR
-
-El timer automático (`cachyos-update.timer`) solo actualiza paquetes
-oficiales con `pacman -Syu`. Los paquetes AUR se quedan desatendidos
-por una razón técnica: `yay` invoca `sudo` internamente para
-instalar los paquetes AUR compilados, y la mayoría de configuraciones
-PAM (en concreto `pam_unix.so try_first_pass nullok` en
-`/etc/pam.d/system-auth`) fuerzan conversation de password incluso
-con reglas NOPASSWD, lo cual falla en contextos sin TTY como un
-servicio systemd.
-
-Si tu sistema tiene una configuración PAM más permisiva, puedes
-intentar añadir a `update-system.sh` un best-effort que pase la
-prueba, pero por defecto el proyecto asume que el timer no puede
-manejar AUR de forma fiable y obliga al usuario a correr `yay -Syu`
-manualmente desde terminal interactiva (donde yay sí funciona).
-
-Cuando la actualización automática se ejecuta y detecta que AUR no
-se pudo actualizar, envía una notificación avisándote. Ejecutar
-`sudo yay -Syu` desde una terminal completa el ciclo.
+La compilación se hace como `$TARGET_USER` (no como root) para que
+`aur` no se queje, y se ejecuta ANTES de `pacman -Syu` para que el
+repo local esté actualizado cuando pacman resuelva.
 
 ## Logs
 
-`~/.local/state/cachyos-setup/`
+- Ejecución automática (timer): `/var/lib/cachyos-setup/`
+- Ejecución manual con `sudo` en terminal: `/root/.local/state/cachyos-setup/`
 
 Los logs se acumulan entre ejecuciones: cada ejecución antepone una
 cabecera con fecha (`===== Actualización: ... =====` para el sistema,
 `===== Check omarchy: ... =====` para omarchy). Para limpiarlos:
 
 ```bash
-rm ~/.local/state/cachyos-setup/*.log
+sudo rm /var/lib/cachyos-setup/*.log
+rm -f /root/.local/state/cachyos-setup/*.log
 ```
+
+Adicionalmente, cada ejecución del actualizador deja un resumen
+persistente en `last-summary.txt` dentro de `STATE_DIR`. Si la
+notificación no pudo entregarse (por ejemplo, sin sesión gráfica),
+un script de autostart la muestra al iniciar sesión y borra el
+fichero para no repetirla.
 
 ## Personalización
 
@@ -110,8 +109,13 @@ rm -f ~/.config/systemd/user/omarchy-check.service \
 sudo systemctl daemon-reload
 systemctl --user daemon-reload
 
-# Eliminar sudoers (legacy)
-sudo rm /etc/sudoers.d/cachyos-pacman
+# Eliminar autostart del resumen de updates
+rm -f ~/.config/autostart/cachyos-update-summary.desktop
+
+# Eliminar config de aurutils (repo local + entrada en pacman.conf)
+sudo rm -rf /var/lib/aur-repo
+sudo sed -i '/^\[aur-local\]/,/^$/d' /etc/pacman.conf
+sudo pacman -Rns --noconfirm aurutils 2>/dev/null || true
 
 # Eliminar logs (opcional)
 rm -rf ~/.local/state/cachyos-setup
@@ -129,10 +133,13 @@ sudo rm -rf /var/lib/cachyos-setup
 - **`cachyos-update.{service,timer}`**: servicio **system-level** que
   corre como root desde `/etc/systemd/system/`. No usa sudo. Los logs
   del timer van a `/var/lib/cachyos-setup/`. La invocación manual con
-  `sudo` sigue funcionando y escribe a `~/.local/state/cachyos-setup/`.
+  `sudo` corre como root y escribe a `/root/.local/state/cachyos-setup/`.
 - **`omarchy-check.{service,timer}`**: servicio **user-level** desde
   `~/.config/systemd/user/`. No necesita root (solo lee un repo git y
   compara con upstream).
+- **`cachyos-update-summary.desktop`**: entrada de autostart en
+  `~/.config/autostart/` que muestra el resumen pendiente al iniciar
+  sesión gráfica (y lo borra tras mostrarlo).
 
 ## Notas de mantenimiento
 

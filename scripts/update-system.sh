@@ -4,10 +4,15 @@ set -uo pipefail
 # unit system-level sobreescribe CACHYOS_SETUP_STATE_DIR=/var/lib/cachyos-setup.
 STATE_DIR="${CACHYOS_SETUP_STATE_DIR:-$HOME/.local/state/cachyos-setup}"
 LOG_FILE="$STATE_DIR/update.log"
+# Log efimero de la ejecucion actual; se trunca en cada corrida. Se
+# mantiene $LOG_FILE con >> (acumulativo historico) para diagnostico.
+CURRENT_RUN_LOG="$STATE_DIR/current-run.log"
+SUMMARY_FILE="$STATE_DIR/last-summary.txt"
 mkdir -p "$STATE_DIR"
+: > "$CURRENT_RUN_LOG"
 
 # Quien ejecuta realmente el script (root o user). Si es root bajamos
-# al usuario objetivo para yay + notificaciones (yay rehúsa root y
+# al usuario objetivo para aur + notificaciones (aur rehúsa root y
 # notify-send necesita el bus de sesion del usuario).
 TARGET_USER=""
 RUN_AS=""
@@ -33,68 +38,104 @@ notify() {
     return 0
 }
 
+write_summary() {
+    # Persistir SIEMPRE el resumen de la corrida, con independencia de
+    # si notify-send logro entregar la notificacion. La primera linea
+    # es el titulo, el resto el body. Una linea literal
+    # 'REINICIO necesario' en el titulo marca urgency=critical para el
+    # script de autostart.
+    local title="$1"
+    local body="$2"
+    {
+        printf '%s\n' "$title"
+        printf '%s\n' "$body"
+    } > "$SUMMARY_FILE"
+}
+
 echo "" >> "$LOG_FILE"
 echo "===== Actualización: $(date '+%Y-%m-%d %H:%M:%S') =====" >> "$LOG_FILE"
-notify normal "Actualizando sistema..." "pacman oficial (AUR: ver aviso al final)"
+notify normal "Actualizando sistema..." "pacman oficial + AUR (aurutils)"
+
+# ---- AUR: aur sync ANTES de pacman -Syu ----
+# Compila paquetes AUR y los deposita en /var/lib/aur-repo/, que esta
+# registrado como repo [aur-local] en /etc/pacman.conf (setup por
+# install.sh). Asi, pacman -Syu resuelve e instala los AUR junto a
+# los oficiales en un solo paso. La salida se redirige a
+# $CURRENT_RUN_LOG para el parseo.
+aur_failed=0
+aur_pkgs=""
+if [[ -n "${CACHYOS_USER:-}" && -z "${SUDO_USER:-}" ]] && [[ -z "$RUN_AS" ]]; then
+    echo "(AUR omitido: falta contexto de usuario)" >> "$LOG_FILE"
+    aur_failed=1
+elif command -v aur >/dev/null 2>&1; then
+    echo "--- aur sync -u ---" >> "$LOG_FILE"
+    if run_as timeout 1800 aur sync -u --noconfirm --no-view \
+            > >(tee -a "$LOG_FILE" >> "$CURRENT_RUN_LOG") 2>&1; then
+        # aur sync imprime ':: Sincronizando paquetes AUR...' seguido de
+        # ':: Starting build de <pkg>...'. Extraemos los nombres de
+        # paquetes construidos en esta corrida.
+        aur_pkgs=$(grep -oE '^:: Starting build de [a-zA-Z0-9._+-]+' "$CURRENT_RUN_LOG" \
+            | sed 's/^:: Starting build de //' | sort -u || true)
+    else
+        echo "(aur sync fallo, ver log)" >> "$LOG_FILE"
+        aur_failed=1
+    fi
+else
+    echo "(aurutils no instalado; AUR no actualizado)" >> "$LOG_FILE"
+    aur_failed=1
+fi
 
 echo "--- pacman -Syu ---" >> "$LOG_FILE"
 # pacman corre como root directamente (system service ya es root, o sudo
-# desde terminal eleva a root). No usa sudo dentro del script.
-if ! pacman -Syu --noconfirm >> "$LOG_FILE" 2>&1; then
+# desde terminal eleva a root). No usa sudo dentro del script. El log
+# de esta corrida va a $CURRENT_RUN_LOG ademas del acumulado.
+if ! pacman -Syu --noconfirm > >(tee -a "$LOG_FILE" >> "$CURRENT_RUN_LOG") 2>&1; then
     notify critical "Error al actualizar (pacman)" "Revisa $LOG_FILE"
+    write_summary "Error al actualizar (pacman)" "Revisa $LOG_FILE"
     exit 1
 fi
 
-echo "--- yay -Syu ---" >> "$LOG_FILE"
-# yay invoca 'sudo' internamente para instalar paquetes AUR. En el
-# contexto del timer (system service sin TTY), sudo falla siempre
-# porque pam_unix.so fuerza conversation de password. yay entra en un
-# loop interno reintentando y nunca devuelve error no-cero, asi que un
-# simple '||' no basta para abortar/cerrar el bloque.
-#
-# Estrategia:
-# - Si CACHYOS_USER esta seteado y SUDO_USER no: es el timer. Skip yay
-#   totalmente (no aborta pero tampoco cuelga); el usuario corre
-#   'sudo yay -Syu' en una terminal interactiva cuando quiera.
-# - En cualquier otro caso (manual con sudo): corre yay con timeout
-#   generoso para no colgar indefinidamente si algo va mal.
-yay_failed=0
-if [[ -n "${CACHYOS_USER:-}" && -z "${SUDO_USER:-}" ]]; then
-    echo "(yay omitido en modo timer; ejecuta 'sudo yay -Syu' en terminal con TTY)" >> "$LOG_FILE"
-    yay_failed=1
-else
-    run_as timeout 600 yay -Syu --noconfirm >> "$LOG_FILE" 2>&1 || yay_failed=1
-fi
-
+# ---- Parseo: SOLO sobre la corrida actual, NO sobre el log historico ----
 reboot_needed=0
-if grep -qiE 'upgrading (linux|nvidia)|upgraded (linux|nvidia)' "$LOG_FILE"; then reboot_needed=1; fi
-pkgs=$(grep -oE '\([0-9]+/[0-9]+\) (upgrading|upgraded) [a-zA-Z0-9._+-]+' "$LOG_FILE" | grep -oE '[a-zA-Z0-9._+-]+$' | sort -u)
+if grep -qiE 'upgrading (linux|nvidia)|upgraded (linux|nvidia)' "$CURRENT_RUN_LOG"; then reboot_needed=1; fi
+pkgs=$(grep -oE '\([0-9]+/[0-9]+\) (upgrading|upgraded) [a-zA-Z0-9._+-]+' "$CURRENT_RUN_LOG" | grep -oE '[a-zA-Z0-9._+-]+$' | sort -u)
 total=$(printf '%s\n' "$pkgs" | grep -c . || true)
 relevant=$(printf '%s\n' "$pkgs" | grep -iE '^(linux|nvidia|systemd|glibc|openssl|mesa|xorg-server|wayland)' || true)
 rel_count=$(printf '%s\n' "$relevant" | grep -c . || true)
 rel_shown=$(printf '%s\n' "$relevant" | head -10)
-rel_shown_n=$(printf '%s\n' "$rel_shown" | grep -c . || true)
-rest=$(( total - rel_shown_n ))
+aur_count=$(printf '%s\n' "$aur_pkgs" | grep -c . || true)
 if [[ "$reboot_needed" -eq 1 ]]; then
     body="Se actualizo kernel o nvidia ($total paquetes). Reinicia cuando puedas."
     [[ "$rel_count" -gt 0 ]] && body+=$'\n\nRelevantes:\n'"$rel_shown"
-    if [[ "$yay_failed" -eq 1 ]]; then
-        body+=$'\n\n⚠ AUR no actualizado por timer. Ejecuta '\''sudo yay -Syu'\'' en tu terminal cuando quieras.'
+    if [[ "$aur_count" -gt 0 ]]; then
+        body+=$'\n\nAUR actualizados:'"$aur_pkgs"
+    fi
+    if [[ "$aur_failed" -eq 1 ]]; then
+        body+=$'\n\n⚠ AUR no actualizado (ver log).'
     fi
     notify critical "Sistema actualizado — REINICIO necesario" "$body"
-elif [[ "$total" -gt 0 ]]; then
-    body="$total paquetes actualizados. No hace falta reiniciar."
+    write_summary "REINICIO necesario" "$body"
+elif [[ "$total" -gt 0 ]] || [[ "$aur_count" -gt 0 ]]; then
+    body="$total paquetes oficiales actualizados."
+    if [[ "$aur_count" -gt 0 ]]; then
+        body+=$'\nAUR actualizados:'"$aur_pkgs"
+    fi
     if [[ "$rel_count" -gt 0 ]]; then
         body+=$'\n\nRelevantes:\n'"$rel_shown"
-        (( rest > 0 )) && body+=$'\n… y '"$rest"' mas'
     fi
-    if [[ "$yay_failed" -eq 1 ]]; then
-        body+=$'\n\n⚠ AUR no actualizado por timer. Ejecuta '\''sudo yay -Syu'\'' en tu terminal cuando quieras.'
+    non_rel=$(( total - rel_count ))
+    if [[ "$non_rel" -gt 0 ]]; then
+        body+=$'\n… y '"$non_rel"' paquetes no relevantes'
+    fi
+    if [[ "$aur_failed" -eq 1 ]]; then
+        body+=$'\n\n⚠ AUR no actualizado (ver log).'
     fi
     notify normal "Sistema actualizado" "$body"
-elif [[ "$yay_failed" -eq 1 ]]; then
-    # Sin updates oficiales pero yay falló: notificar AUR pendiente
-    notify normal "AUR pendiente" "Ejecuta 'yay -Syu' en terminal con TTY para actualizar paquetes AUR."
+    write_summary "Sistema actualizado" "$body"
+elif [[ "$aur_failed" -eq 1 ]]; then
+    body="AUR no actualizado (ver $LOG_FILE)."
+    notify normal "AUR pendiente" "$body"
+    write_summary "AUR pendiente" "$body"
 fi
 
 if [[ "$total" -gt 0 ]] && command -v needrestart >/dev/null 2>&1; then

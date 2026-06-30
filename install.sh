@@ -4,6 +4,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 SYSTEMD_SYSTEM_DIR="/etc/systemd/system"
 SCRIPTS_DIR="$REPO_DIR/scripts"
+TARGET_USER="$USER"
 chmod +x "$REPO_DIR"/scripts/*.sh "$REPO_DIR"/install.sh
 
 # ---- State dir para ejecucion manual (user-level) ----
@@ -13,6 +14,41 @@ mkdir -p "$HOME/.local/state/cachyos-setup"
 sudo mkdir -p /var/lib/cachyos-setup
 sudo chmod 755 /var/lib/cachyos-setup
 
+# ---- Migracion: purgar sudoers legacy de despliegues previos ----
+# En versiones anteriores se desplegaba /etc/sudoers.d/cachyos-pacman con
+# reglas NOPASSWD para sudo/pacman. El nuevo modelo corre como root
+# directo desde un unit system-level, por lo que ese fichero no debe
+# existir. Migracion idempotente: si esta, se elimina y se avisa.
+if [ -f /etc/sudoers.d/cachyos-pacman ]; then
+    sudo rm -f /etc/sudoers.d/cachyos-pacman
+    echo "Migracion: eliminado /etc/sudoers.d/cachyos-pacman (legacy, ya no necesario)."
+fi
+
+# ---- AUR: aurutils + repo local para actualizacion automatica ----
+# aur sync compila paquetes AUR y los deposita en un repo local; pacman
+# los instala junto a los oficiales en el mismo pacman -Syu. La
+# instalacion de aurutils se hace con pacman (oficial) en lugar de AUR
+# para evitar recursividad en el primer despliegue.
+if ! command -v aur >/dev/null 2>&1; then
+    sudo pacman -S --needed --noconfirm aurutils
+fi
+AUR_REPO_DIR="/var/lib/aur-repo"
+sudo mkdir -p "$AUR_REPO_DIR"
+sudo chown "$TARGET_USER":"$TARGET_USER" "$AUR_REPO_DIR"
+if ! ls "$AUR_REPO_DIR"/aur-local.db.tar.gz >/dev/null 2>&1; then
+    sudo -u "$TARGET_USER" repo-add "$AUR_REPO_DIR/aur-local.db.tar.gz"
+fi
+if ! grep -q '^\[aur-local\]' /etc/pacman.conf; then
+    sudo tee -a /etc/pacman.conf > /dev/null <<EOF
+
+[aur-local]
+SigLevel = Optional TrustAll
+Server = file://$AUR_REPO_DIR
+EOF
+fi
+# Importar la clave GPG de aurutils (idempotente).
+sudo -u "$TARGET_USER" bash -c 'command -v aur-key >/dev/null 2>&1 && aur-key || true' || true
+
 # ---- Migracion desde versiones previas (user-level cachyos-update) ----
 if [ -f "$HOME/.config/systemd/user/cachyos-update.timer" ]; then
     systemctl --user disable --now cachyos-update.timer 2>/dev/null || true
@@ -20,6 +56,22 @@ if [ -f "$HOME/.config/systemd/user/cachyos-update.timer" ]; then
           "$HOME/.config/systemd/user/cachyos-update.timer"
     systemctl --user daemon-reload
 fi
+
+# ---- Autostart: mostrar resumen persistente de updates al iniciar sesion ----
+# Cuando el timer corre sin sesion grafica, las notificaciones se
+# persisten en $STATE_DIR/last-summary.txt. Este script de autostart lo
+# muestra al iniciar sesion y luego lo borra para no repetirlo.
+AUTOSTART_DIR="$HOME/.config/autostart"
+mkdir -p "$AUTOSTART_DIR"
+cat > "$AUTOSTART_DIR/cachyos-update-summary.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=CachyOS Update Summary
+Exec=$SCRIPTS_DIR/show-update-summary.sh
+X-GNOME-Autostart-enabled=true
+NoDisplay=false
+EOF
+chmod 644 "$AUTOSTART_DIR/cachyos-update-summary.desktop"
 
 # ---- user-level units (omarchy-check) ----
 mkdir -p "$SYSTEMD_USER_DIR"
