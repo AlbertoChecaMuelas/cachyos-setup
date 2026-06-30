@@ -27,10 +27,12 @@ y este proyecto usa [versionado semántico](https://semver.org/lang/es/).
 - README y PATH de notificaciones asumen que el script puede ejecutarse con TTY.
 
 ### Fixed
+- activar nvidia-drm.modeset=1 via drop-in limine-entry-tool
 - usar TARGET_USER/HOME bajo sudo y documentar AUR automático
 - configurar AUR automático y permisos de resumen
 - corregir instalación aurutils y setup repo local
 - corregir bugs críticos pre-merge y añadir AUR automático con aurutils
+- ampliar NOPASSWD para yay sin TTY (#7)
 - Activar `nvidia-drm.modeset=1` de forma persistente via drop-in de `limine-entry-tool` (fix pantalla negra en soft-reboot con `nvidia-open`).
 - notification suprimida cuando `pacman -Syu` no actualiza nada (antes enviaba "0 paquetes actualizados" como ruido).
 - `omarchy-check` escribe `OK: al dia` en log cuando la version local coincide con upstream, sin enviar notify.
