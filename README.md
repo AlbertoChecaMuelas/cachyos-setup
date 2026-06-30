@@ -13,7 +13,7 @@ Scripts de automatización para CachyOS + omarchy.
 
 - CachyOS
 - Hyprland + mako (servidor de notificaciones)
-- [aurutils](https://aur.archlinux.org/packages/aurutils/) — instalado automáticamente por `./install.sh` desde los repos oficiales.
+- [aurutils](https://aur.archlinux.org/packages/aurutils/) — instalado automáticamente por `./install.sh`, compilado automáticamente desde AUR (vía yay/paru, o makepkg si no hay helper).
 - libnotify (notify-send)
 - [needrestart](https://aur.archlinux.org/packages/needrestart/) (recomendado,
   AUR) — para notificar servicios pendientes de reiniciar tras actualizar
@@ -26,7 +26,7 @@ Scripts de automatización para CachyOS + omarchy.
 ```bash
 git clone https://github.com/AlbertoChecaMuelas/cachyos-setup.git
 cd cachyos-setup
-./install.sh
+sudo ./install.sh
 ```
 
 `./install.sh` configura de forma idempotente:
@@ -35,6 +35,72 @@ cd cachyos-setup
 - Sección `[aur-local]` en `/etc/pacman.conf` apuntando a `file:///var/lib/aur-repo`.
 - Script de autostart `~/.config/autostart/cachyos-update-summary.desktop`
   que muestra el resumen pendiente al iniciar sesión.
+
+## Primeros pasos
+
+Después de clonar e instalar, registra en el repo local los paquetes AUR
+que ya tengas instalados para que el servicio `cachyos-update` los
+gestione automáticamente a partir de ahora:
+
+1. Ejecuta el instalador:
+
+   ```bash
+   sudo ./install.sh
+   ```
+
+2. Lista los paquetes AUR ya presentes en el sistema:
+
+   ```bash
+   pacman -Qm
+   ```
+
+3. Regístralos en el repo local de aurutils (una sola vez por paquete;
+   `aur sync` los construye y los añade a `/var/lib/aur-repo/` para que
+   `pacman -Syu` los actualice como cualquier oficial):
+
+   ```bash
+   aur sync --noconfirm --no-view paquete1 paquete2 ...
+   ```
+
+   (puedes pasar varios paquetes en una sola invocación).
+
+Tras esto, `systemctl list-timers --all` mostrará el timer
+`cachyos-update.timer` corriendo cada domingo y los AUR se actualizarán
+junto con el sistema.
+
+## Migración desde versión anterior
+
+Si ya tenías una versión previa con `cachyos-update.{service,timer}`
+**user-level** y `/etc/sudoers.d/cachyos-pacman`:
+
+1. Actualiza el repo:
+
+   ```bash
+   git pull
+   ```
+
+2. Ejecuta el instalador (purga el sudoers legacy, desactiva y borra el
+   timer user-level antiguo y despliega la versión system-level):
+
+   ```bash
+   sudo ./install.sh
+   ```
+
+3. Verifica que el timer user-level antiguo ya no existe:
+
+   ```bash
+   systemctl --user list-timers | grep cachyos-update || echo "OK: timer user-level eliminado"
+   ```
+
+   No debe aparecer ningún `cachyos-update.timer` en la salida.
+
+4. Registra los paquetes AUR en el repo local (mismo procedimiento que
+   en Primeros pasos):
+
+   ```bash
+   pacman -Qm
+   aur sync --noconfirm --no-view paquete1 paquete2 ...
+   ```
 
 ## Uso manual
 

@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
-SYSTEMD_SYSTEM_DIR="/etc/systemd/system"
-SCRIPTS_DIR="$REPO_DIR/scripts"
+# Resolver el usuario real (el que invoca sudo, o el usuario activo si
+# se ejecuta sin sudo). Todo lo que toca paths de usuario debe usar
+# $TARGET_HOME / $TARGET_USER; $HOME bajo sudo apunta a /root.
 TARGET_USER="${SUDO_USER:-$USER}"
 TARGET_HOME=$(getent passwd "$TARGET_USER" | cut -d: -f6)
+SYSTEMD_USER_DIR="$TARGET_HOME/.config/systemd/user"
+SYSTEMD_SYSTEM_DIR="/etc/systemd/system"
+SCRIPTS_DIR="$REPO_DIR/scripts"
 chmod +x "$REPO_DIR"/scripts/*.sh "$REPO_DIR"/install.sh
 
 # ---- State dir para ejecucion manual (user-level) ----
-mkdir -p "$HOME/.local/state/cachyos-setup"
+mkdir -p "$TARGET_HOME/.local/state/cachyos-setup"
 
 # ---- State dir para ejecucion automatica (system-level) ----
 sudo mkdir -p /var/lib/cachyos-setup
@@ -70,11 +73,16 @@ fi
 sudo -u "$TARGET_USER" bash -c 'command -v aur-key >/dev/null 2>&1 && aur-key || true' || true
 
 # ---- Migracion desde versiones previas (user-level cachyos-update) ----
-if [ -f "$HOME/.config/systemd/user/cachyos-update.timer" ]; then
-    systemctl --user disable --now cachyos-update.timer 2>/dev/null || true
-    rm -f "$HOME/.config/systemd/user/cachyos-update.service" \
-          "$HOME/.config/systemd/user/cachyos-update.timer"
-    systemctl --user daemon-reload 2>/dev/null || true
+# Bajo sudo, $HOME apunta a /root; debemos mirar la HOME del usuario
+# real (TARGET_HOME) para encontrar el timer antiguo. Ademas, el
+# disable opera sobre el bus de usuario del TARGET_USER, no del root
+# que ejecuta install.sh; runuser baja al uid del usuario real para
+# que systemctl --user funcione.
+if [ -f "$TARGET_HOME/.config/systemd/user/cachyos-update.timer" ]; then
+    runuser -u "$TARGET_USER" -- systemctl --user disable --now cachyos-update.timer 2>/dev/null || true
+    rm -f "$TARGET_HOME/.config/systemd/user/cachyos-update.service" \
+          "$TARGET_HOME/.config/systemd/user/cachyos-update.timer"
+    runuser -u "$TARGET_USER" -- systemctl --user daemon-reload 2>/dev/null || true
 fi
 
 # ---- Autostart: mostrar resumen persistente de updates al iniciar sesion ----
@@ -115,13 +123,13 @@ systemctl --user --machine="$TARGET_USER@.host" daemon-reload || true
 systemctl --user --machine="$TARGET_USER@.host" enable --now omarchy-check.timer || true
 
 # ---- system-level units (cachyos-update, run as root) ----
-USER_UID="$(id -u "$USER")"
+USER_UID="$(id -u "$TARGET_USER")"
 for unit in "$REPO_DIR"/systemd/system/*.service "$REPO_DIR"/systemd/system/*.timer; do
     [ -e "$unit" ] || continue
     name=$(basename "$unit")
     target="$SYSTEMD_SYSTEM_DIR/$name"
     sudo sed -e "s|@SCRIPTS_DIR@|$SCRIPTS_DIR|g" \
-              -e "s|@USER@|$USER|g" \
+              -e "s|@USER@|$TARGET_USER|g" \
               -e "s|@UID@|$USER_UID|g" "$unit" | sudo tee "$target" > /dev/null
 done
 sudo systemctl daemon-reload
