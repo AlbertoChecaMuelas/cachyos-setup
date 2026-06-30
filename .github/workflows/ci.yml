@@ -44,10 +44,14 @@ jobs:
 
       - name: Validate sudoers file (visudo -cf)
         run: |
-          for f in sudoers/*; do
-            echo "visudo -cf $f"
-            sudo visudo -cf "$f"
-          done
+          if compgen -G "sudoers/*" > /dev/null; then
+            for f in sudoers/*; do
+              echo "visudo -cf $f"
+              sudo visudo -cf "$f"
+            done
+          else
+            echo "No sudoers/* files; skipping."
+          fi
 
       - name: Validate systemd unit files (advisory)
         continue-on-error: true
