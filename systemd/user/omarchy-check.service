@@ -6,5 +6,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus
+Environment=OMARCHY_DIR=%h/repos/forks/omarchy-on-cachyos
+Environment=OMARCHY_URL=https://github.com/mroboff/omarchy-on-cachyos.git
 ExecStartPre=/usr/bin/nm-online -q --timeout=60
 ExecStart="@SCRIPTS_DIR@/check-omarchy-update.sh"
