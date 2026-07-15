@@ -224,7 +224,20 @@ waybar_merge_block() {
                              || rtrim ~ /(true|false|null)$/)) {
                          needs_comma = 1
                      }
-                     if (needs_comma) sub(/$/, ",", prev)
+                     if (needs_comma) {
+                         # Insertar la coma en el offset del contenido
+                         # real (el mismo usado para construir rtrim
+                         # arriba), NO al final absoluto de prev. Asi,
+                         # si la linea lleva un comentario inline
+                         # (p.ej. `"height": 30 // px`), la coma cae
+                         # tras el contenido (`30`) y el comentario
+                         # queda intacto a continuacion: `30, // px`.
+                         # Sin comentario, el offset coincide con el
+                         # final del contenido y el resultado es
+                         # equivalente al previo.
+                         split_pos = length(rtrim)
+                         prev = substr(prev, 1, split_pos) "," substr(prev, split_pos + 1)
+                     }
                      print prev
                      print open_m
                      print block
