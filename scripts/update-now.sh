@@ -23,7 +23,7 @@ run_update() {
   #      motivo del fallo (no cerrar la ventana al instante).
   #   3. Matamos el proceso de journalctl al retornar pkexec, para
   #      no dejar journalctl -f huerfano.
-  journalctl -u cachyos-update.service -f --no-pager >/dev/null 2>&1 &
+  journalctl -u cachyos-update.service -f --no-pager &
   JOURNAL_PID=$!
   rc=0
   pkexec systemctl start "$SERVICE" || rc=$?
@@ -38,7 +38,7 @@ run_update() {
     # shellcheck source=/dev/null
     source "$ENV_FILE"
     echo "Resultado: ${LAST_RUN_RESULT:-desconocido}"
-    if [[ "${LAST_RUN_RESULT:-}" == "failure" ]]; then
+    if [[ "${LAST_RUN_RESULT:-}" == "failure" || "${LAST_RUN_RESULT:-}" == "partial" ]]; then
       echo "Motivo:    ${LAST_RUN_FAIL_REASON:-sin detalle}"
     fi
     if [[ "${LAST_RUN_REBOOT_NEEDED:-false}" == "true" ]]; then

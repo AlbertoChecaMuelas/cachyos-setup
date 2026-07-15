@@ -208,6 +208,12 @@ waybar_merge_block() {
                      #   linea de comentario // ...
                      rtrim = prev
                      sub(/[[:space:]]+$/, "", rtrim)
+                     # Si la linea previa lleva un comentario inline
+                     # // ... al final (p.ej. `"height": 30 // px`),
+                     # recortarlo SOLO para la decision de coma. El
+                     # comentario original NO se modifica en la salida:
+                     # el contenido escrito sigue siendo prev intacto.
+                     sub(/[[:space:]]+\/\/.*$/, "", rtrim)
                      needs_comma = 0
                      if (rtrim != "" \
                          && rtrim !~ /^[[:space:]]*\/\// \
