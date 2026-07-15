@@ -13,18 +13,34 @@ SERVICE="cachyos-update.service"
 
 run_update() {
   echo "== Disparando actualización manual =="
-  pkexec systemctl start "$SERVICE"
-  echo "Servicio iniciado. Siguiendo el progreso..."
-  journalctl -u "$SERVICE" -f --no-pager &
-  JPID=$!
-  while systemctl is-active --quiet "$SERVICE"; do sleep 2; done
-  kill "$JPID" 2>/dev/null || true
+  # cachyos-update.service es Type=oneshot, por lo que pkexec
+  # systemctl start BLOQUEA hasta que el update termina (bien o
+  # mal). Por eso:
+  #   1. Lanzamos journalctl -f ANTES del start, para que capture el
+  #      progreso en vivo durante el oneshot.
+  #   2. Capturamos el rc del start SIN dejar que set -e aborte: el
+  #      flujo debe continuar hasta leer last-run.env y mostrar el
+  #      motivo del fallo (no cerrar la ventana al instante).
+  #   3. Matamos el proceso de journalctl al retornar pkexec, para
+  #      no dejar journalctl -f huerfano.
+  journalctl -u cachyos-update.service -f --no-pager >/dev/null 2>&1 &
+  JOURNAL_PID=$!
+  rc=0
+  pkexec systemctl start "$SERVICE" || rc=$?
+  kill "$JOURNAL_PID" 2>/dev/null || true
+  wait "$JOURNAL_PID" 2>/dev/null || true
   echo
   echo "== Actualización finalizada =="
+  if [[ $rc -ne 0 ]]; then
+    echo "AVISO: el servicio devolvio codigo de salida $rc (la ventana se mantiene abierta para que veas el motivo)."
+  fi
   if [[ -f "$ENV_FILE" ]]; then
     # shellcheck source=/dev/null
     source "$ENV_FILE"
     echo "Resultado: ${LAST_RUN_RESULT:-desconocido}"
+    if [[ "${LAST_RUN_RESULT:-}" == "failure" ]]; then
+      echo "Motivo:    ${LAST_RUN_FAIL_REASON:-sin detalle}"
+    fi
     if [[ "${LAST_RUN_REBOOT_NEEDED:-false}" == "true" ]]; then
       echo ">>> Se RECOMIENDA reiniciar el sistema (kernel/nvidia actualizados)."
     fi

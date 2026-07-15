@@ -191,13 +191,34 @@ waybar_merge_block() {
             'BEGIN { inserted = 0; prev = "" }
              {
                  if (!inserted && before != "" && $0 ~ before) {
-                     # Insertamos aqui. Si la linea previa es un cierre
-                     # de objeto (}) SIN coma final, anyadimos coma
-                     # para mantener JSON valido al meter el nuevo
-                     # bloque como hermano de las claves existentes.
-                     if (prev !~ /^[[:space:]]*\/\// && prev ~ /\}$/ && prev !~ /,$/) {
-                         sub(/$/, ",", prev)
+                     # Insertamos aqui. Si la linea previa es el ultimo
+                     # miembro del nivel superior y NO termina ya en
+                     # coma, anyadimos coma para mantener JSON valido
+                     # al meter el nuevo bloque como hermano.
+                     # Casos que NECESITAN coma (valor cerrado, no
+                     # apertura):
+                     #   }  cierre de objeto
+                     #   ]  cierre de array
+                     #   "  fin de string escalar (p.ej. "format": "")
+                     #   0-9  fin de numero escalar (p.ej. "height": 30)
+                     #   true/false/null  fin de literal
+                     # Casos que NO la necesitan:
+                     #   ,  ya tiene coma
+                     #   { o [  apertura de un nuevo contenedor
+                     #   linea de comentario // ...
+                     rtrim = prev
+                     sub(/[[:space:]]+$/, "", rtrim)
+                     needs_comma = 0
+                     if (rtrim != "" \
+                         && rtrim !~ /^[[:space:]]*\/\// \
+                         && rtrim !~ /,$/ \
+                         && (rtrim ~ /\}$/ || rtrim ~ /\]$/ \
+                             || rtrim ~ /"$/ \
+                             || rtrim ~ /[0-9]$/ \
+                             || rtrim ~ /(true|false|null)$/)) {
+                         needs_comma = 1
                      }
+                     if (needs_comma) sub(/$/, ",", prev)
                      print prev
                      print open_m
                      print block
@@ -232,6 +253,13 @@ waybar_merge_block() {
 # el nombre no estaba. Operacion idempotente. Asume el array en una
 # sola linea (patron tipico en configs omarchy); si modules-right no
 # existe, no se crea (el usuario tendria otra estructura).
+#
+# Limitacion: el sed solo opera cuando el array y su ] de cierre
+# estan en la misma linea. Si el array esta repartido en varias
+# lineas, el patron no matchea y la funcion NO registra el modulo.
+# En ese caso se avisa por stderr para que el usuario lo agregue a
+# mano (no es obligatorio soportar multilinea automaticamente; SI es
+# obligatorio dejar de fallar en silencio).
 waybar_register_module() {
     local target="$1" module_name="$2"
     [[ -f "$target" ]] || return 0
@@ -239,11 +267,24 @@ waybar_register_module() {
     if grep '"modules-right"' "$target" | grep -qF -- "\"$module_name\""; then
         return 0
     fi
+    # Capturar el hash antes/despues para detectar si el sed produjo
+    # algun cambio efectivo. Si no cambio nada, probablemente el array
+    # esta repartido en varias lineas y el patron de una sola linea
+    # no encontro nada que sustituir.
+    local before_hash after_hash
+    before_hash=$(grep -F '"modules-right"' "$target" | sort | md5sum)
     # Reemplazar el ultimo ] de la linea modules-right por ", "<name>"]".
     # El JSONC permite coma final tras ], asi que conservamos cualquier
     # coma que hubiera (captura con \(,*\)$). Usamos | como delimiter
     # porque module_name puede contener "/" (custom/cachyos-update).
     sed -i "/\"modules-right\"/ s|\]\(,*\)\$|, \"${module_name}\"]\1|" "$target"
+    after_hash=$(grep -F '"modules-right"' "$target" | sort | md5sum)
+    if [[ "$before_hash" == "$after_hash" ]]; then
+        echo "AVISO waybar: no se pudo registrar \"${module_name}\" en modules-right de forma automatica." >&2
+        echo "  El array modules-right de $target parece estar repartido en varias lineas," >&2
+        echo "  algo que este script no soporta. Anyade manualmente \"${module_name}\" al" >&2
+        echo "  array modules-right en $target para que el modulo sea visible." >&2
+    fi
 }
 
 WAYBAR_CONFIG="$TARGET_HOME/.config/waybar/config.jsonc"

@@ -66,30 +66,41 @@ write_last_run_record() {
     # last-summary.txt (efimero, lo borra el autostart al mostrarlo),
     # este fichero persiste entre logins y lo consume el visor
     # show-last-run.sh / el modulo waybar. Argumentos:
-    #   $1=result(success|failure)
-    #   $2=fail_reason (motivo corto, una linea; "" en exito)
+    #   $1=result(success|partial|failure)
+    #   $2=fail_reason (motivo corto, una linea; "" en exito/partial)
     #   $3=reboot_needed(true|false)
     #   $4=package_count
     #   $5=ruta al fichero con la lista humana de paquetes
+    #
+    # Escritura ATOMICA: ambos ficheros se escriben primero a un
+    # temporal en el mismo directorio y luego se hace mv al nombre
+    # final. Asi un lector concurrente ve siempre la version antigua
+    # completa o la nueva completa, nunca un contenido truncado a
+    # media escritura.
     mkdir -p "$STATE_DIR"
+    local env_tmp pkgs_tmp
+    env_tmp="$STATE_DIR/.last-run.env.tmp.$$"
+    pkgs_tmp="$STATE_DIR/.last-run-packages.txt.tmp.$$"
     {
         echo "LAST_RUN_TIMESTAMP=\"$(date -Iseconds)\""
         echo "LAST_RUN_RESULT=\"$1\""
         echo "LAST_RUN_FAIL_REASON=\"$2\""
         echo "LAST_RUN_REBOOT_NEEDED=\"$3\""
         echo "LAST_RUN_PACKAGE_COUNT=\"$4\""
-    } > "$STATE_DIR/last-run.env"
-    chmod 644 "$STATE_DIR/last-run.env" 2>/dev/null || true
+    } > "$env_tmp"
+    chmod 644 "$env_tmp" 2>/dev/null || true
+    mv -f "$env_tmp" "$STATE_DIR/last-run.env"
     # Lista humana de paquetes actualizados (uno por linea). Si el
     # caller no pasa un fichero o esta vacio, dejamos el destino
     # existente vacio para no arrastrar paquetes del run anterior.
     local pkg_src="$5"
     if [[ -n "$pkg_src" && -s "$pkg_src" ]]; then
-        cp -f "$pkg_src" "$STATE_DIR/last-run-packages.txt"
+        cp -f "$pkg_src" "$pkgs_tmp"
     else
-        : > "$STATE_DIR/last-run-packages.txt"
+        : > "$pkgs_tmp"
     fi
-    chmod 644 "$STATE_DIR/last-run-packages.txt" 2>/dev/null || true
+    chmod 644 "$pkgs_tmp" 2>/dev/null || true
+    mv -f "$pkgs_tmp" "$STATE_DIR/last-run-packages.txt"
 }
 
 echo "" >> "$LOG_FILE"
@@ -212,8 +223,22 @@ fi
 echo "===== Fin: $(date '+%Y-%m-%d %H:%M:%S') (reboot_needed=$reboot_needed) =====" >> "$LOG_FILE"
 
 # ---- Registro durable del resultado de la corrida ----
-# Escribir SIEMPRE al final (ruta de exito) para que el visor y el
-# modulo waybar puedan consultar el ultimo resultado aunque el usuario
-# no haya iniciado sesion grafica.
-write_last_run_record "success" "" "$reboot_lit" "$total_all" "$pkg_list_tmp"
+# Escribir SIEMPRE al final (ruta de pacman OK) para que el visor y
+# el modulo waybar puedan consultar el ultimo resultado aunque el
+# usuario no haya iniciado sesion grafica.
+#
+# Valores posibles de LAST_RUN_RESULT:
+#   success  -> pacman Y AUR fueron bien
+#   partial  -> pacman bien pero aur_failed=1 (oficiales actualizados,
+#               AUR pendiente o fallido). El motivo del AUR se guarda
+#               en LAST_RUN_FAIL_REASON para que el visor lo muestre.
+#   failure  -> pacman fallo (escrito en su propia ruta, antes de
+#               llegar aqui).
+result="success"
+fail_reason=""
+if [[ "$aur_failed" -eq 1 ]]; then
+    result="partial"
+    fail_reason="AUR no actualizado (ver $LOG_FILE)"
+fi
+write_last_run_record "$result" "$fail_reason" "$reboot_lit" "$total_all" "$pkg_list_tmp"
 rm -f "$pkg_list_tmp"

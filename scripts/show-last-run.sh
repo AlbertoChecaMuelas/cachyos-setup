@@ -22,10 +22,26 @@ render() {
   source "$ENV_FILE"
   echo "== Última actualización del sistema =="
   echo "Fecha:     ${LAST_RUN_TIMESTAMP:-desconocida}"
-  echo "Resultado: ${LAST_RUN_RESULT:-desconocido}"
-  if [[ "${LAST_RUN_RESULT:-}" == "failure" ]]; then
-    echo "Motivo:    ${LAST_RUN_FAIL_REASON:-sin detalle}"
-  fi
+  # Tres valores posibles para LAST_RUN_RESULT:
+  #   success  -> pacman Y AUR OK
+  #   partial  -> pacman OK pero AUR fallo (estado diferenciado)
+  #   failure  -> pacman fallo (sin distinguir AUR)
+  case "${LAST_RUN_RESULT:-}" in
+    success)
+      echo "Resultado: success"
+      ;;
+    partial)
+      echo "Resultado: partial (Actualización parcial: pacman OK, AUR falló)"
+      echo "Motivo:    ${LAST_RUN_FAIL_REASON:-sin detalle}"
+      ;;
+    failure)
+      echo "Resultado: failure"
+      echo "Motivo:    ${LAST_RUN_FAIL_REASON:-sin detalle}"
+      ;;
+    *)
+      echo "Resultado: ${LAST_RUN_RESULT:-desconocido}"
+      ;;
+  esac
   echo "Paquetes:  ${LAST_RUN_PACKAGE_COUNT:-0}"
   if [[ "${LAST_RUN_REBOOT_NEEDED:-false}" == "true" ]]; then
     echo "Reinicio:  RECOMENDADO (kernel/nvidia actualizados)"
