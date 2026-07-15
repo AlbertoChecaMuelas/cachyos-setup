@@ -243,6 +243,102 @@ sudo rm -rf /var/lib/cachyos-setup
   `~/.config/autostart/` que muestra el resumen pendiente al iniciar
   sesión gráfica (y lo borra tras mostrarlo).
 
+## Reporte de actualizaciones
+
+Cada ejecución del actualizador (manual o automática) deja un **registro
+durable** del resultado, separado del aviso efímero de login. Esto
+permite consultar en cualquier momento qué se actualizó, si hubo
+fallos y si conviene reiniciar.
+
+### Registro durable (`last-run.env` + `last-run-packages.txt`)
+
+`update-system.sh` escribe, al final de cada corrida, dos ficheros en
+`STATE_DIR` (por defecto `/var/lib/cachyos-setup` para el servicio
+system-level, o `~/.local/state/cachyos-setup` para la ejecución manual
+con `sudo`):
+
+- `last-run.env`: fichero clave=valor sourceable en shell con las
+  claves:
+  - `LAST_RUN_TIMESTAMP` (fecha ISO-8601 de la corrida).
+  - `LAST_RUN_RESULT` (`success` o `failure`).
+  - `LAST_RUN_FAIL_REASON` (motivo corto en caso de fallo).
+  - `LAST_RUN_REBOOT_NEEDED` (`true` o `false`, derivado del kernel/
+    nvidia actualizado).
+  - `LAST_RUN_PACKAGE_COUNT` (oficiales + AUR únicos actualizados).
+- `last-run-packages.txt`: lista humana de paquetes actualizados (uno
+  por línea).
+
+A diferencia de `last-summary.txt` (que el script de autostart borra
+tras mostrarlo en el siguiente login), estos dos ficheros **persisten
+entre logins** y se sobreescriben en cada nueva corrida.
+
+### Visor `show-last-run.sh`
+
+`scripts/show-last-run.sh` lee el registro durable y lo presenta en
+una terminal flotante. Patrón de terminal: usa
+`omarchy-launch-floating-terminal-with-presentation` si está
+disponible (mismo patrón que el resto del repo); en caso contrario
+degrada a `${TERMINAL:-alacritty}`.
+
+Sin registro todavía, imprime "No hay ningún registro de actualización
+todavía." y sale sin error.
+
+### Disparo manual `update-now.sh`
+
+`scripts/update-now.sh` lanza una actualización bajo demanda sin
+reimplementar la lógica de actualización (que vive en
+`update-system.sh`). Lo que hace:
+
+1. Escala privilegios vía `pkexec systemctl start cachyos-update.service`.
+2. Sigue el progreso con `journalctl -u cachyos-update.service -f`.
+3. Al terminar, lee `last-run.env` y, si `LAST_RUN_REBOOT_NEEDED=true`,
+   muestra `>>> Se RECOMIENDA reiniciar el sistema (kernel/nvidia
+   actualizados).`
+
+El aviso de reinicio se deriva **exclusivamente** de
+`LAST_RUN_REBOOT_NEEDED`. No fuerza reinicio.
+
+### Regla polkit (por qué polkit y no sudoers NOPASSWD)
+
+Escalar privilegios para `systemctl start cachyos-update.service` se
+hace vía **polkit** con la regla
+`etc/polkit-1/rules.d/49-cachyos-update.rules` (instalada en
+`/etc/polkit-1/rules.d/` por `install.sh`). Esa regla autoriza a los
+miembros del grupo `wheel` a iniciar **únicamente** la unidad
+`cachyos-update.service` (acción `org.freedesktop.systemd1.manage-units`
+filtrada por nombre de unidad), sin contraseña.
+
+`install.sh` mantiene la política de **no reintroducir sudoers
+NOPASSWD** (de hecho, purga `/etc/sudoers.d/cachyos-pacman` si existe
+de instalaciones previas). Polkit es el reemplazo correcto porque
+acota la autorización a una sola unidad de systemd, no a sudo genérico.
+
+### Módulo waybar
+
+Si tienes `~/.config/waybar/config.jsonc` desplegado (omarchy o
+configuración propia), `install.sh` fusiona de forma **idempotente y no
+destructiva** un único módulo `custom/cachyos-update`:
+
+- Click izquierdo: abre el visor `show-last-run.sh` en una terminal
+  flotante.
+- Click derecho: lanza el disparo manual `update-now.sh` (pide
+  contraseña vía polkit).
+
+El merge:
+
+1. Crea un backup con timestamp (`config.jsonc.cachyos.bak-…` y
+   `style.css.cachyos.bak-…`) **solo la primera vez** que se toca cada
+   fichero.
+2. Delimita el bloque insertado con marcadores literales
+   `// >>> cachyos-setup update module >>>` / `// <<< ... <<<` (en
+   JSONC) y `/* >>> ... >>> */` / `/* <<< ... <<< */` (en CSS). Si los
+   marcadores ya están presentes, **reemplaza** el bloque (no
+   duplica), por lo que re-ejecutar `install.sh` es seguro.
+3. Registra `custom/cachyos-update` en el array `modules-right` solo
+   si la clave existe y el nombre no estaba ya, sin reordenar ni
+   eliminar módulos preexistentes.
+4. Nunca sobrescribe el fichero completo.
+
 ## Notas de mantenimiento
 
 - Tras editar un fichero `.service` o `.timer` del repo, vuelve a ejecutar

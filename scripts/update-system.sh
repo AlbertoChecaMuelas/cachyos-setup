@@ -61,6 +61,37 @@ write_summary() {
     chmod 644 "$SUMMARY_FILE" 2>/dev/null || true
 }
 
+write_last_run_record() {
+    # Registro DURABLE del resultado de la corrida. A diferencia de
+    # last-summary.txt (efimero, lo borra el autostart al mostrarlo),
+    # este fichero persiste entre logins y lo consume el visor
+    # show-last-run.sh / el modulo waybar. Argumentos:
+    #   $1=result(success|failure)
+    #   $2=fail_reason (motivo corto, una linea; "" en exito)
+    #   $3=reboot_needed(true|false)
+    #   $4=package_count
+    #   $5=ruta al fichero con la lista humana de paquetes
+    mkdir -p "$STATE_DIR"
+    {
+        echo "LAST_RUN_TIMESTAMP=\"$(date -Iseconds)\""
+        echo "LAST_RUN_RESULT=\"$1\""
+        echo "LAST_RUN_FAIL_REASON=\"$2\""
+        echo "LAST_RUN_REBOOT_NEEDED=\"$3\""
+        echo "LAST_RUN_PACKAGE_COUNT=\"$4\""
+    } > "$STATE_DIR/last-run.env"
+    chmod 644 "$STATE_DIR/last-run.env" 2>/dev/null || true
+    # Lista humana de paquetes actualizados (uno por linea). Si el
+    # caller no pasa un fichero o esta vacio, dejamos el destino
+    # existente vacio para no arrastrar paquetes del run anterior.
+    local pkg_src="$5"
+    if [[ -n "$pkg_src" && -s "$pkg_src" ]]; then
+        cp -f "$pkg_src" "$STATE_DIR/last-run-packages.txt"
+    else
+        : > "$STATE_DIR/last-run-packages.txt"
+    fi
+    chmod 644 "$STATE_DIR/last-run-packages.txt" 2>/dev/null || true
+}
+
 echo "" >> "$LOG_FILE"
 echo "===== Actualización: $(date '+%Y-%m-%d %H:%M:%S') =====" >> "$LOG_FILE"
 notify normal "Actualizando sistema..." "pacman oficial + AUR (aurutils)"
@@ -107,6 +138,7 @@ echo "--- pacman -Syu ---" >> "$LOG_FILE"
 if ! pacman -Syu --noconfirm > >(tee -a "$LOG_FILE" >> "$CURRENT_RUN_LOG") 2>&1; then
     notify critical "Error al actualizar (pacman)" "Revisa $LOG_FILE"
     write_summary "Error al actualizar (pacman)" "Revisa $LOG_FILE"
+    write_last_run_record "failure" "pacman -Syu fallo" "false" "0" ""
     exit 1
 fi
 
@@ -119,6 +151,18 @@ relevant=$(printf '%s\n' "$pkgs" | grep -iE '^(linux|nvidia|systemd|glibc|openss
 rel_count=$(printf '%s\n' "$relevant" | grep -c . || true)
 rel_shown=$(printf '%s\n' "$relevant" | head -10)
 aur_count=$(printf '%s\n' "$aur_pkgs" | grep -c . || true)
+# Lista humana de paquetes actualizados para el registro durable:
+# combina los oficiales parseados con los AUR construidos, sin
+# duplicados, uno por linea.
+pkg_list_tmp=$(mktemp)
+{
+    printf '%s\n' "$pkgs"
+    printf '%s\n' "$aur_pkgs"
+} | sort -u > "$pkg_list_tmp" || true
+# paquete_count_total (oficiales + AUR unicos) para el visor
+total_all=$(grep -c . "$pkg_list_tmp" || true)
+reboot_lit="false"
+[[ "$reboot_needed" -eq 1 ]] && reboot_lit="true"
 if [[ "$reboot_needed" -eq 1 ]]; then
     body="Se actualizo kernel o nvidia ($total paquetes). Reinicia cuando puedas."
     [[ "$rel_count" -gt 0 ]] && body+=$'\n\nRelevantes:\n'"$rel_shown"
@@ -166,3 +210,10 @@ if [[ "$total" -gt 0 ]] && command -v needrestart >/dev/null 2>&1; then
 fi
 
 echo "===== Fin: $(date '+%Y-%m-%d %H:%M:%S') (reboot_needed=$reboot_needed) =====" >> "$LOG_FILE"
+
+# ---- Registro durable del resultado de la corrida ----
+# Escribir SIEMPRE al final (ruta de exito) para que el visor y el
+# modulo waybar puedan consultar el ultimo resultado aunque el usuario
+# no haya iniciado sesion grafica.
+write_last_run_record "success" "" "$reboot_lit" "$total_all" "$pkg_list_tmp"
+rm -f "$pkg_list_tmp"

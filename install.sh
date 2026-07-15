@@ -8,8 +8,29 @@ TARGET_USER="${SUDO_USER:-$USER}"
 TARGET_HOME=$(getent passwd "$TARGET_USER" | cut -d: -f6)
 SYSTEMD_USER_DIR="$TARGET_HOME/.config/systemd/user"
 SYSTEMD_SYSTEM_DIR="/etc/systemd/system"
+# SCRIPTS_DIR es la ruta instalada final de TODOS los scripts del repo
+# (update-system.sh, show-update-summary.sh, show-last-run.sh,
+# update-now.sh). Los units systemd referencian esta ruta via
+# @SCRIPTS_DIR@; el modulo waybar (Phase 4) la usa como destino de
+# on-click / on-click-right. Mantener sincronizada con la seccion de
+# despliegue de scripts de abajo.
 SCRIPTS_DIR="$REPO_DIR/scripts"
+# Patron de despliegue de scripts: el repositorio ES el destino.
+# Cualquier *.sh nuevo bajo scripts/ queda ejecutable de forma
+# idempotente sin necesidad de una copia ni de reinstalacion manual.
 chmod +x "$REPO_DIR"/scripts/*.sh "$REPO_DIR"/install.sh
+
+# Verificacion explicita de los scripts del visor y del disparo
+# manual: deben existir junto a update-system.sh / show-update-summary.sh
+# y ser ejecutables. Si falta alguno, abortamos: el modulo waybar y el
+# polkit los referencian y un install roto dejaria el sistema sin
+# camino para disparar/recomendar actualizaciones.
+for required_script in update-system.sh show-update-summary.sh show-last-run.sh update-now.sh; do
+    if [[ ! -x "$SCRIPTS_DIR/$required_script" ]]; then
+        echo "ERROR: falta o no es ejecutable $SCRIPTS_DIR/$required_script" >&2
+        exit 1
+    fi
+done
 
 # ---- State dir para ejecucion manual (user-level) ----
 mkdir -p "$TARGET_HOME/.local/state/cachyos-setup"
@@ -17,6 +38,22 @@ mkdir -p "$TARGET_HOME/.local/state/cachyos-setup"
 # ---- State dir para ejecucion automatica (system-level) ----
 sudo mkdir -p /var/lib/cachyos-setup
 sudo chmod 755 /var/lib/cachyos-setup
+
+# ---- Regla polkit: autorizar a wheel a iniciar cachyos-update.service ----
+# Permite que el disparo manual (update-now.sh) escale privilegios
+# con pkexec sin reintroducir reglas sudoers de password vacio (que
+# install.sh acaba de purgar lineas arriba). Polkit relee las reglas
+# en cuanto aparece el fichero, no hace falta reiniciar el daemon.
+POLKIT_SRC="$REPO_DIR/etc/polkit-1/rules.d/49-cachyos-update.rules"
+POLKIT_DST="/etc/polkit-1/rules.d/49-cachyos-update.rules"
+if [ -f "$POLKIT_SRC" ]; then
+    sudo install -d -m 0755 /etc/polkit-1/rules.d
+    # Idempotente: install copia el fichero y aplica 0644 root:root.
+    sudo install -m 0644 "$POLKIT_SRC" "$POLKIT_DST"
+    echo "Regla polkit cachyos-update instalada en $POLKIT_DST."
+else
+    echo "Regla polkit no presente en el repo; se omite."
+fi
 
 # ---- Migracion: purgar sudoers legacy de despliegues previos ----
 # En versiones anteriores se desplegaba /etc/sudoers.d/cachyos-pacman con
@@ -103,6 +140,151 @@ X-GNOME-Autostart-enabled=true
 NoDisplay=false
 EOF
 chmod 644 "$AUTOSTART_DIR/cachyos-update-summary.desktop"
+
+# ---- Waybar: fusion idempotente del modulo de acceso CachyOS Update ----
+# Si el usuario tiene ~/.config/waybar/ desplegado (omarchy o
+# configuracion propia), añadimos UN unico modulo custom con dos
+# acciones: ver el ultimo resultado (visor) y disparar la
+# actualizacion manual (pkexec). La fusion es NO destructiva:
+#   1. Backup timestamp SOLO la primera vez (un *.cachyos.bak-*).
+#   2. Bloque delimitado por marcadores (idempotente: re-ejecutar
+#      sustituye el bloque, no lo duplica).
+#   3. Registro en modules-right solo si la clave existe y el nombre
+#      no estaba ya (sin reordenar ni eliminar entradas).
+#   4. Nunca sobrescribe el fichero completo.
+# Si waybar no esta instalado o no tiene config, se omite sin abortar.
+
+# Helper: backup timestamp SOLO si no existe ya uno previo para ese
+# fichero. Asi una re-instalacion no acumula decenas de backups.
+waybar_backup_once() {
+    local target="$1"
+    [[ -f "$target" ]] || return 0
+    if ! ls "${target}".cachyos.bak-* >/dev/null 2>&1; then
+        cp -p "$target" "${target}.cachyos.bak-$(date +%s)"
+    fi
+}
+
+# Helper: inserta (o reemplaza) un bloque delimitado por marcadores.
+#   $1=snippet_path $2=target_path $3=open_marker $4=close_marker
+#   $5=before_pattern (regex awk; vacio = append al final).
+waybar_merge_block() {
+    local snippet="$1" target="$2" open_m="$3" close_m="$4" before_pat="${5:-}"
+    [[ -f "$target" ]] || return 1
+    local block
+    block=$(cat "$snippet")
+    if grep -qF -- "$open_m" "$target"; then
+        # Marcadores presentes: reemplazar el contenido entre ellos.
+        awk \
+            -v open_m="$open_m" -v close_m="$close_m" -v block="$block" \
+            'BEGIN { in_block = 0 }
+             index($0, open_m)  { print open_m; print block; in_block = 1; next }
+             index($0, close_m)  { print close_m; in_block = 0; next }
+             in_block            { next }
+                                { print }' \
+            "$target" > "${target}.new" && mv "${target}.new" "$target"
+    else
+        # Sin marcadores: insertar antes del patron. Si el patron
+        # esta vacio, no hay punto de insercion claro: append al
+        # final via bloque END.
+        awk \
+            -v before="$before_pat" -v open_m="$open_m" -v close_m="$close_m" -v block="$block" \
+            'BEGIN { inserted = 0; prev = "" }
+             {
+                 if (!inserted && before != "" && $0 ~ before) {
+                     # Insertamos aqui. Si la linea previa es un cierre
+                     # de objeto (}) SIN coma final, anyadimos coma
+                     # para mantener JSON valido al meter el nuevo
+                     # bloque como hermano de las claves existentes.
+                     if (prev !~ /^[[:space:]]*\/\// && prev ~ /\}$/ && prev !~ /,$/) {
+                         sub(/$/, ",", prev)
+                     }
+                     print prev
+                     print open_m
+                     print block
+                     print close_m
+                     print ""
+                     prev = $0
+                     inserted = 1
+                     next
+                 }
+                 if (!inserted) {
+                     if (prev != "") print prev
+                     prev = $0
+                 } else {
+                     print
+                 }
+             }
+             END {
+                 if (!inserted) {
+                     if (prev != "") print prev
+                     print open_m
+                     print block
+                     print close_m
+                 } else {
+                     print prev
+                 }
+             }' \
+            "$target" > "${target}.new" && mv "${target}.new" "$target"
+    fi
+}
+
+# Helper: anade un nombre al array modules-right si la clave existe y
+# el nombre no estaba. Operacion idempotente. Asume el array en una
+# sola linea (patron tipico en configs omarchy); si modules-right no
+# existe, no se crea (el usuario tendria otra estructura).
+waybar_register_module() {
+    local target="$1" module_name="$2"
+    [[ -f "$target" ]] || return 0
+    grep -q '"modules-right"' "$target" || return 0
+    if grep '"modules-right"' "$target" | grep -qF -- "\"$module_name\""; then
+        return 0
+    fi
+    # Reemplazar el ultimo ] de la linea modules-right por ", "<name>"]".
+    # El JSONC permite coma final tras ], asi que conservamos cualquier
+    # coma que hubiera (captura con \(,*\)$). Usamos | como delimiter
+    # porque module_name puede contener "/" (custom/cachyos-update).
+    sed -i "/\"modules-right\"/ s|\]\(,*\)\$|, \"${module_name}\"]\1|" "$target"
+}
+
+WAYBAR_CONFIG="$TARGET_HOME/.config/waybar/config.jsonc"
+WAYBAR_STYLE="$TARGET_HOME/.config/waybar/style.css"
+WAYBAR_CONFIG_SNIPPET="$REPO_DIR/waybar/config-snippet.jsonc"
+WAYBAR_STYLE_SNIPPET="$REPO_DIR/waybar/style-snippet.css"
+
+if [[ -f "$WAYBAR_CONFIG" ]] && [[ -f "$WAYBAR_CONFIG_SNIPPET" ]]; then
+    waybar_backup_once "$WAYBAR_CONFIG"
+    # Sustituir @SCRIPTS_DIR@ por la ruta real del repo en el snippet.
+    waybar_snippet_rendered=$(mktemp)
+    sed "s|@SCRIPTS_DIR@|$SCRIPTS_DIR|g" "$WAYBAR_CONFIG_SNIPPET" > "$waybar_snippet_rendered"
+    # Registrar el modulo en modules-right ANTES de insertar el
+    # bloque: asi el grep posterior no confunde la clave top-level
+    # recien insertada con una entrada del array.
+    waybar_register_module "$WAYBAR_CONFIG" "custom/cachyos-update"
+    # Insertar el bloque antes de la } de cierre del objeto raiz.
+    waybar_merge_block "$waybar_snippet_rendered" "$WAYBAR_CONFIG" \
+        "// >>> cachyos-setup update module >>>" \
+        "// <<< cachyos-setup update module <<<" \
+        '^}$'
+    rm -f "$waybar_snippet_rendered"
+    echo "Modulo waybar CachyOS Update fusionado en $WAYBAR_CONFIG."
+fi
+
+if [[ -f "$WAYBAR_STYLE" ]] && [[ -f "$WAYBAR_STYLE_SNIPPET" ]]; then
+    waybar_backup_once "$WAYBAR_STYLE"
+    # En CSS no hay un punto de insercion claro: append al final.
+    waybar_merge_block "$WAYBAR_STYLE_SNIPPET" "$WAYBAR_STYLE" \
+        "/* >>> cachyos-setup update module >>> */" \
+        "/* <<< cachyos-setup update module <<< */" \
+        ""
+    echo "Estilo waybar CachyOS Update fusionado en $WAYBAR_STYLE."
+fi
+
+# Recargar waybar si esta corriendo, para que el nuevo modulo sea
+# visible sin re-login. Best-effort: si no hay bus de usuario o
+# waybar no corre, se omite.
+if [[ -f "$WAYBAR_CONFIG" ]]; then
+    runuser -u "$TARGET_USER" -- pkill -USR2 waybar 2>/dev/null || true
+fi
 
 # ---- user-level units (omarchy-check) ----
 mkdir -p "$SYSTEMD_USER_DIR"
