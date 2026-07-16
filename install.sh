@@ -360,11 +360,19 @@ waybar_register_module() {
                     if (already) {
                         for (l = array_start; l <= end_line; l++) print buf[l]
                     } else {
-                        # Buscar la ultima linea de contenido (no vacia,
-                        # no es la linea de cierre).
+                        # Buscar la ultima linea con contenido de VALOR
+                        # real (no vacia, no comentario-solo). Se ignoran
+                        # las lineas que sean unicamente un comentario
+                        # `// ...`, para que la coma se anyada siempre
+                        # a la entrada anterior de verdad y no a un
+                        # comentario suelto.
                         last_content = -1
                         for (l = end_line - 1; l > array_start; l--) {
-                            if ((l in buf) && buf[l] !~ /^[[:space:]]*$/) {
+                            if (!(l in buf)) continue
+                            rtrim = buf[l]
+                            sub(/[[:space:]]+$/, "", rtrim)
+                            sub(/[[:space:]]+\/\/.*$/, "", rtrim)
+                            if (rtrim != "" && rtrim !~ /^[[:space:]]*\/\//) {
                                 last_content = l
                                 break
                             }
@@ -375,18 +383,30 @@ waybar_register_module() {
                             match(buf[last_content], /^[[:space:]]*/)
                             indent = substr(buf[last_content], 1, RLENGTH)
                         }
-                        # Anyadir coma a la ultima entrada si falta,
-                        # antes de cualquier comentario inline.
+                        # Anyadir coma a la ultima entrada si falta, antes
+                        # de cualquier comentario inline. Misma logica de
+                        # deteccion valor-vs-comentario y de "ya termina
+                        # en coma" que waybar_merge_block, para no
+                        # duplicar comas ni escribirlas sobre un
+                        # comentario.
                         if (last_content > -1) {
                             cur = buf[last_content]
-                            cmt_pos = match(cur, /[[:space:]]+\/\//)
-                            if (cmt_pos > 0) {
-                                head = substr(cur, 1, cmt_pos - 1)
-                                sub(/[[:space:]]+$/, "", head)
-                                tail = substr(cur, cmt_pos)
-                                buf[last_content] = head "," tail
-                            } else {
-                                buf[last_content] = cur ","
+                            rtrim = cur
+                            sub(/[[:space:]]+$/, "", rtrim)
+                            sub(/[[:space:]]+\/\/.*$/, "", rtrim)
+                            needs_comma = 0
+                            if (rtrim != "" \
+                                && rtrim !~ /^[[:space:]]*\/\// \
+                                && rtrim !~ /,$/ \
+                                && (rtrim ~ /\}$/ || rtrim ~ /\]$/ \
+                                    || rtrim ~ /"$/ \
+                                    || rtrim ~ /[0-9]$/ \
+                                    || rtrim ~ /(true|false|null)$/)) {
+                                needs_comma = 1
+                            }
+                            if (needs_comma) {
+                                split_pos = length(rtrim)
+                                buf[last_content] = substr(cur, 1, split_pos) "," substr(cur, split_pos + 1)
                             }
                         }
                         # Volcar buffer con la nueva entrada insertada
@@ -413,27 +433,12 @@ waybar_register_module() {
                         }
                     }
                 }
-                # Si el array cierra en la misma linea que la clave,
-                # el camino rapido ya lo cubrio; caemos al caso general
-                # que detecta idempotencia e imprime el buffer.
-                if (!in_target && end_line == array_start) {
-                    cur = buf[array_start]
-                    if (index(cur, "\"" mod "\"")) {
-                        print cur
-                    } else {
-                        cmt_pos = match(cur, /[[:space:]]+\/\//)
-                        if (cmt_pos > 0) {
-                            head = substr(cur, 1, cmt_pos - 1)
-                            sub(/[[:space:]]+$/, "", head)
-                            tail = substr(cur, cmt_pos)
-                            print head "," tail
-                        } else {
-                            sub(/\](,*)$/, ", \"" mod "\"]\1", cur)
-                            print cur
-                        }
-                    }
-                    delete buf[array_start]
-                }
+                # Nota: no hace falta manejar aqui "el array cierra en
+                # la misma linea que la clave" (end_line == array_start):
+                # el guard de bash (closing_on_key_line) ya deriva ese
+                # caso al fast-path de una sola linea antes de invocar
+                # este awk, asi que esa rama seria inalcanzable en este
+                # bloque multi-linea.
             } else {
                 print line
             }
