@@ -75,3 +75,44 @@ EOF
   grep -qF '"clock",' "$CONFIG"
   grep -qF '"battery",' "$CONFIG"
 }
+
+@test "multi-line modules-right: last entry already ends in a trailing comma, no double comma is produced" {
+  cat > "$CONFIG" << 'EOF'
+{
+    "modules-right": [
+        "clock",
+        "battery",
+    ]
+}
+EOF
+  run register
+  [ "$status" -eq 0 ]
+  assert_valid_jsonc "$CONFIG"
+  grep -qF '"custom/cachyos-update"' "$CONFIG"
+  # No double comma anywhere in the file.
+  ! grep -q ',,' "$CONFIG"
+  # The previously-last entry keeps exactly one trailing comma.
+  grep -qE '^[[:space:]]*"battery",[[:space:]]*$' "$CONFIG"
+}
+
+@test "multi-line modules-right: last non-empty line before the closing bracket is a comment-only line" {
+  cat > "$CONFIG" << 'EOF'
+{
+    "modules-right": [
+        "clock",
+        "battery"
+        // note
+    ]
+}
+EOF
+  run register
+  [ "$status" -eq 0 ]
+  assert_valid_jsonc "$CONFIG"
+  grep -qF '"custom/cachyos-update"' "$CONFIG"
+  # The comma is added to the real last value ("battery"), not to the
+  # comment-only line.
+  grep -qE '^[[:space:]]*"battery",[[:space:]]*$' "$CONFIG"
+  # The comment line survives unmutated (no comma appended to it).
+  grep -qE '^[[:space:]]*// note[[:space:]]*$' "$CONFIG"
+  ! grep -qF '// note,' "$CONFIG"
+}
