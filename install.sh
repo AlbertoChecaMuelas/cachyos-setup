@@ -149,8 +149,10 @@ chmod 644 "$AUTOSTART_DIR/cachyos-update-summary.desktop"
 #   1. Backup timestamp SOLO la primera vez (un *.cachyos.bak-*).
 #   2. Bloque delimitado por marcadores (idempotente: re-ejecutar
 #      sustituye el bloque, no lo duplica).
-#   3. Registro en modules-right solo si la clave existe y el nombre
-#      no estaba ya (sin reordenar ni eliminar entradas).
+#   3. Registro en modules-right idempotente sobre el span completo
+#      del array: soporta tanto arrays de una sola linea como
+#      arrays repartidos en varias lineas, preservando indentacion,
+#      formato y comentarios `//` de las entradas existentes.
 #   4. Nunca sobrescribe el fichero completo.
 # Si waybar no esta instalado o no tiene config, se omite sin abortar.
 
@@ -269,41 +271,182 @@ waybar_merge_block() {
 }
 
 # Helper: anade un nombre al array modules-right si la clave existe y
-# el nombre no estaba. Operacion idempotente. Asume el array en una
-# sola linea (patron tipico en configs omarchy); si modules-right no
-# existe, no se crea (el usuario tendria otra estructura).
+# el nombre no estaba. Operacion idempotente sobre el span completo
+# del array. Soporta arrays de una sola linea (caso tipico omarchy)
+# y arrays repartidos en varias lineas. Preserva indentacion,
+# formato y comentarios `//` de las entradas existentes.
 #
-# Limitacion: el sed solo opera cuando el array y su ] de cierre
-# estan en la misma linea. Si el array esta repartido en varias
-# lineas, el patron no matchea y la funcion NO registra el modulo.
-# En ese caso se avisa por stderr para que el usuario lo agregue a
-# mano (no es obligatorio soportar multilinea automaticamente; SI es
-# obligatorio dejar de fallar en silencio).
+# Aviso por stderr solo como fallback real si la clave
+# "modules-right" no puede localizarse en el fichero.
 waybar_register_module() {
     local target="$1" module_name="$2"
     [[ -f "$target" ]] || return 0
-    grep -q '"modules-right"' "$target" || return 0
-    if grep '"modules-right"' "$target" | grep -qF -- "\"$module_name\""; then
+    if ! grep -q '"modules-right"' "$target"; then
+        echo "AVISO waybar: no se pudo localizar la clave \"modules-right\" en $target." >&2
+        echo "  Anyade manualmente \"${module_name}\" al array modules-right correspondiente" >&2
+        echo "  para que el modulo sea visible." >&2
         return 0
     fi
-    # Capturar el hash antes/despues para detectar si el sed produjo
-    # algun cambio efectivo. Si no cambio nada, probablemente el array
-    # esta repartido en varias lineas y el patron de una sola linea
-    # no encontro nada que sustituir.
-    local before_hash after_hash
-    before_hash=$(grep -F '"modules-right"' "$target" | sort | md5sum)
-    # Reemplazar el ultimo ] de la linea modules-right por ", "<name>"]".
-    # El JSONC permite coma final tras ], asi que conservamos cualquier
-    # coma que hubiera (captura con \(,*\)$). Usamos | como delimiter
-    # porque module_name puede contener "/" (custom/cachyos-update).
-    sed -i "/\"modules-right\"/ s|\]\(,*\)\$|, \"${module_name}\"]\1|" "$target"
-    after_hash=$(grep -F '"modules-right"' "$target" | sort | md5sum)
-    if [[ "$before_hash" == "$after_hash" ]]; then
-        echo "AVISO waybar: no se pudo registrar \"${module_name}\" en modules-right de forma automatica." >&2
-        echo "  El array modules-right de $target parece estar repartido en varias lineas," >&2
-        echo "  algo que este script no soporta. Anyade manualmente \"${module_name}\" al" >&2
-        echo "  array modules-right en $target para que el modulo sea visible." >&2
+    # Detectar si "modules-right" y su ] de cierre estan en la misma
+    # linea fisica: si lo estan, usamos el camino rapido de sed ya
+    # testeado para no cambiar el comportamiento observable de ese caso.
+    local key_line closing_on_key_line
+    key_line=$(grep -nF '"modules-right"' "$target" | head -n1 | cut -d: -f1)
+    closing_on_key_line=$(awk -v kl="$key_line" '
+        NR == kl {
+            for (i = 1; i <= length($0); i++) {
+                if (substr($0, i, 1) == "]") { print 1; exit }
+            }
+            print 0
+        }
+    ' "$target")
+    if [[ "$closing_on_key_line" == "1" ]]; then
+        # ---- Fast path: array de una sola linea ----
+        # Idempotencia: comprobamos sobre la linea de la clave, que es
+        # el span completo del array en este caso.
+        if grep '"modules-right"' "$target" | grep -qF -- "\"$module_name\""; then
+            return 0
+        fi
+        # Reemplazar el ultimo ] de la linea modules-right por ", "<name>"]".
+        # El JSONC permite coma final tras ], asi que conservamos cualquier
+        # coma que hubiera (captura con \(,*\)$). Usamos | como delimiter
+        # porque module_name puede contener "/" (custom/cachyos-update).
+        sed -i "/\"modules-right\"/ s|\]\(,*\)\$|, \"${module_name}\"]\1|" "$target"
+        return 0
     fi
+    # ---- Multi-line: rastrear la profundidad de corchetes del array ----
+    # Estrategia: awk que localiza la linea de la clave, sigue
+    # acumulando lineas hasta el ] que cierra ESE array (respetando
+    # profundidad de corchetes), y entonces decide:
+    #   - si el modulo ya esta en el span -> imprime el buffer tal cual
+    #   - si no -> anyade coma a la ultima entrada con contenido, e
+    #     inserta la nueva entrada como linea nueva antes del ] de
+    #     cierre, con la misma indentacion que las entradas existentes.
+    # Robustez minima: el rastreo no se rompe por comentarios `//`
+    # que no contienen corchetes. Limite conocido: corchetes dentro
+    # de strings o comentarios no se soportan (los nombres de
+    # modulos Waybar no contienen `[` o `]`).
+    awk -v mod="$module_name" '
+        BEGIN {
+            in_target = 0
+            target_depth = 0
+            array_start = -1
+            end_line = -1
+        }
+        {
+            line = $0
+            if (in_target) {
+                buf[NR] = line
+                for (i = 1; i <= length(line); i++) {
+                    ch = substr(line, i, 1)
+                    if (ch == "[") target_depth++
+                    else if (ch == "]") {
+                        target_depth--
+                        if (target_depth == 0) {
+                            end_line = NR
+                            in_target = 0
+                        }
+                    }
+                }
+                if (!in_target) {
+                    # Array cerrado: procesar buffer.
+                    already = 0
+                    for (l = array_start; l <= end_line; l++) {
+                        if ((l in buf) && index(buf[l], "\"" mod "\"")) {
+                            already = 1
+                            break
+                        }
+                    }
+                    if (already) {
+                        for (l = array_start; l <= end_line; l++) print buf[l]
+                    } else {
+                        # Buscar la ultima linea de contenido (no vacia,
+                        # no es la linea de cierre).
+                        last_content = -1
+                        for (l = end_line - 1; l > array_start; l--) {
+                            if ((l in buf) && buf[l] !~ /^[[:space:]]*$/) {
+                                last_content = l
+                                break
+                            }
+                        }
+                        # Derivar indentacion de la ultima entrada.
+                        indent = ""
+                        if (last_content > -1) {
+                            match(buf[last_content], /^[[:space:]]*/)
+                            indent = substr(buf[last_content], 1, RLENGTH)
+                        }
+                        # Anyadir coma a la ultima entrada si falta,
+                        # antes de cualquier comentario inline.
+                        if (last_content > -1) {
+                            cur = buf[last_content]
+                            cmt_pos = match(cur, /[[:space:]]+\/\//)
+                            if (cmt_pos > 0) {
+                                head = substr(cur, 1, cmt_pos - 1)
+                                sub(/[[:space:]]+$/, "", head)
+                                tail = substr(cur, cmt_pos)
+                                buf[last_content] = head "," tail
+                            } else {
+                                buf[last_content] = cur ","
+                            }
+                        }
+                        # Volcar buffer con la nueva entrada insertada
+                        # justo antes del ] de cierre.
+                        for (l = array_start; l < end_line; l++) print buf[l]
+                        print indent "\"" mod "\""
+                        print buf[end_line]
+                    }
+                    for (l = array_start; l <= end_line; l++) delete buf[l]
+                }
+            } else if (line ~ /"modules-right"/) {
+                array_start = NR
+                buf[NR] = line
+                for (i = 1; i <= length(line); i++) {
+                    ch = substr(line, i, 1)
+                    if (ch == "[") {
+                        target_depth++
+                        in_target = 1
+                    } else if (ch == "]") {
+                        target_depth--
+                        if (target_depth == 0) {
+                            end_line = NR
+                            in_target = 0
+                        }
+                    }
+                }
+                # Si el array cierra en la misma linea que la clave,
+                # el camino rapido ya lo cubrio; caemos al caso general
+                # que detecta idempotencia e imprime el buffer.
+                if (!in_target && end_line == array_start) {
+                    cur = buf[array_start]
+                    if (index(cur, "\"" mod "\"")) {
+                        print cur
+                    } else {
+                        cmt_pos = match(cur, /[[:space:]]+\/\//)
+                        if (cmt_pos > 0) {
+                            head = substr(cur, 1, cmt_pos - 1)
+                            sub(/[[:space:]]+$/, "", head)
+                            tail = substr(cur, cmt_pos)
+                            print head "," tail
+                        } else {
+                            sub(/\](,*)$/, ", \"" mod "\"]\1", cur)
+                            print cur
+                        }
+                    }
+                    delete buf[array_start]
+                }
+            } else {
+                print line
+            }
+        }
+        END {
+            # Fichero malformado (el array nunca cerro): volcar buffer.
+            if (in_target) {
+                for (l = array_start; l <= NR; l++) {
+                    if (l in buf) print buf[l]
+                }
+            }
+        }
+    ' "$target" > "${target}.new" && mv "${target}.new" "$target"
 }
 
 WAYBAR_CONFIG="$TARGET_HOME/.config/waybar/config.jsonc"
