@@ -143,3 +143,17 @@ run_check() {
   run find "$STATE_DIR" -maxdepth 1 -name '.omarchy-check.env.tmp.*'
   [ -z "$output" ]
 }
+
+@test "regression: default OMARCHY_URL (env var unset) points to the current fork, not the old upstream" {
+  # No ejecuta el script completo (evitaria una llamada real de red vía
+  # git ls-remote): extrae y evalua solo la linea de asignacion por
+  # defecto de OMARCHY_URL para fijar el valor esperado tras el fix del
+  # remoto por defecto (mroboff -> AlbertoChecaMuelas).
+  run bash -c '
+    unset OMARCHY_URL
+    eval "$(grep -m1 "^OMARCHY_URL=" "'"$SCRIPT"'")"
+    echo "$OMARCHY_URL"
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = "https://github.com/AlbertoChecaMuelas/omarchy-on-cachyos.git" ]
+}
