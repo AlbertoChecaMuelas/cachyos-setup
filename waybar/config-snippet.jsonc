@@ -6,7 +6,7 @@
 // real del repo en tiempo de instalacion (mismo patron que los
 // units systemd del repo).
 "custom/cachyos-update": {
-    "format": "󠫘",
+    "format": "",
     "tooltip-format": "Actualización CachyOS + omarchy-on-cachyos\nClick izq: ver último resultado y estado de omarchy\nClick der: actualizar cachyos ahora",
     "on-click": "@SCRIPTS_DIR@/show-last-run.sh",
     "on-click-right": "@SCRIPTS_DIR@/update-now.sh",
