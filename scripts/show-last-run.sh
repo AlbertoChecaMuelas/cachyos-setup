@@ -29,6 +29,12 @@ OMARCHY_ENV_FILE="$OMARCHY_STATE_DIR/omarchy-check.env"
 # Localizacion del script de comprobacion junto al visor (mismo dir).
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHECK_OMARCHY_SCRIPT="$SCRIPTS_DIR/check-omarchy-update.sh"
+# Accion interactiva [u]: reutiliza update-now.sh INLINE con el guard
+# de salto de pausa. Asi el visor dispara la actualizacion y
+# re-renderiza al terminar sin abrir otra terminal flotante. No se
+# anyade pkexec nuevo: se reutiliza el de update-now.sh + polkit ya
+# desplegado.
+UPDATE_NOW_SCRIPT="$SCRIPTS_DIR/update-now.sh"
 
 render() {
   echo "== Última actualización del sistema =="
@@ -104,7 +110,7 @@ if [[ "${CACHYOS_INLINE:-0}" == "1" ]]; then
   while true; do
     render
     echo
-    printf '%s' "[c] Comprobar omarchy ahora   [Enter] Cerrar > "
+    printf '%s' "[c] Comprobar omarchy ahora   [u] Actualizar ahora   [Enter] Cerrar > "
     if ! read -r action; then
       # EOF (p.ej. stdin cerrado en un test): salimos sin error.
       exit 0
@@ -117,6 +123,21 @@ if [[ "${CACHYOS_INLINE:-0}" == "1" ]]; then
           "$CHECK_OMARCHY_SCRIPT" || true
         else
           bash "$CHECK_OMARCHY_SCRIPT" || true
+        fi
+        echo
+        ;;
+      u|U)
+        echo
+        echo "Lanzando actualizacion manual..."
+        # Reutiliza la rama INLINE de update-now.sh (no la que abre
+        # otra terminal flotante). CACHYOS_INLINE=1 fuerza la rama
+        # run_update; CACHYOS_SKIP_PAUSE=1 evita que update-now.sh
+        # haga su propia pausa final y devuelva el control al bucle
+        # del visor para re-renderizar el estado.
+        if [[ -x "$UPDATE_NOW_SCRIPT" ]]; then
+          CACHYOS_INLINE=1 CACHYOS_SKIP_PAUSE=1 "$UPDATE_NOW_SCRIPT" || true
+        else
+          CACHYOS_INLINE=1 CACHYOS_SKIP_PAUSE=1 bash "$UPDATE_NOW_SCRIPT" || true
         fi
         echo
         ;;

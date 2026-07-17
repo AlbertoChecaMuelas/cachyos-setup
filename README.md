@@ -297,18 +297,35 @@ aquí solo se informa del estado.
 Sin registro todavía, imprime "No hay ningún registro de actualización
 todavía." para el bloque de cachyos-update y sale sin error.
 
-#### Comprobación bajo demanda de omarchy
+#### Acciones interactivas en el visor
 
 Dentro de la ventana flotante del visor se muestra un prompt:
 
-    [c] Comprobar omarchy ahora   [Enter] Cerrar >
+    [c] Comprobar omarchy ahora   [u] Actualizar ahora   [Enter] Cerrar >
 
-Pulsar `c` ejecuta `check-omarchy-update.sh` directamente (user-level,
-sin `pkexec`: el servicio `omarchy-check` es user-level y solo hace
-lectura de red), refresca `omarchy-check.env` con el resultado de la
-comprobación y re-renderiza el bloque de omarchy en la **misma
-ventana** sin cerrarla. Pulsar `Enter` (o dejar la entrada vacía)
-cierra la ventana.
+- `c` ejecuta `check-omarchy-update.sh` directamente (user-level, sin
+  `pkexec`: el servicio `omarchy-check` es user-level y solo hace
+  lectura de red), refresca `omarchy-check.env` con el resultado de la
+  comprobación y re-renderiza el bloque de omarchy en la **misma
+  ventana** sin cerrarla.
+- `u` lanza la actualización del sistema reutilizando `update-now.sh`
+  **inline** dentro de la misma ventana flotante. La acción escala
+  privilegios con el `pkexec` ya existente de `update-now.sh` (sin
+  añadir un `pkexec` nuevo ni relajar el polkit) y muestra el progreso
+  en vivo del `oneshot`. Al terminar, el visor re-renderiza el bloque
+  de "Última actualización" — `update-now.sh` salta su pausa final de
+  cierre (variable de entorno `CACHYOS_SKIP_PAUSE`) para devolver el
+  control al bucle.
+- Pulsar `Enter` (o dejar la entrada vacía) cierra la ventana.
+
+> Cambio de diseño: el visor, hasta ahora de solo lectura, pasa a
+> poder disparar una acción que escala privilegios. **No se añade
+> `pkexec` nuevo**: se reutiliza el de `update-now.sh`, que ya está
+> sujeto a la regla polkit
+> `etc/polkit-1/rules.d/49-cachyos-update.rules`. La superficie de
+> privilegios no se amplía: el click-derecha del módulo waybar (que
+> ya invocaba `update-now.sh`) y la tecla `u` del visor comparten la
+> misma acción y el mismo `pkexec`.
 
 #### Estado durable de omarchy (`omarchy-check.env`)
 
