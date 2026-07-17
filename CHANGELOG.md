@@ -8,6 +8,9 @@ y este proyecto usa [versionado semántico](https://semver.org/lang/es/).
 ## [Unreleased]
 
 ### Added
+- mostrar estado y comprobación bajo demanda en el visor flotante
+- persistir estado durable sourceable de comprobación
+- registro durable, visor y disparo manual de actualizaciones con acceso desde waybar
 - notif. utiles, logs acumulativos, AUR manual y service system-level
 - notificar listado de paquetes relevantes al actualizar (kernel, nvidia, systemd, glibc, openssl, mesa, xorg-server, wayland)
 - detectar servicios pendientes de reiniciar via `needrestart` (AUR opcional) tras actualizar
@@ -19,6 +22,8 @@ y este proyecto usa [versionado semántico](https://semver.org/lang/es/).
 - **Resumen persistente** (`$STATE_DIR/last-summary.txt`) escrito SIEMPRE al final de la corrida, con independencia de si `notify-send` tuvo exito. Un script de autostart (`scripts/show-update-summary.sh`) lo muestra al iniciar sesion grafica y luego lo borra.
 
 ### Changed
+- elimina var muerta, simplifica condicion y restringe teclas del visor
+- tooltip y README para estado y comprobación de omarchy
 - `cachyos-update.{service,timer}` pasa a ser **system-level** (corre como root desde `/etc/systemd/system/`) en lugar de user-level. Esto evita el problema PAM/sudo/TTY que bloqueaba la automatizacion en algunos sistemas.
 - `update-system.sh` ya no invoca `sudo` para `pacman`/`aur`/`needrestart`; asume que se ejecuta como root (bien desde el timer, bien desde la terminal con `sudo`).
 - logs del timer semanal van a `/var/lib/cachyos-setup/`; logs de invocacion manual con `sudo` van a `/root/.local/state/cachyos-setup/`.
@@ -27,6 +32,12 @@ y este proyecto usa [versionado semántico](https://semver.org/lang/es/).
 - README y PATH de notificaciones asumen que el script puede ejecutarse con TTY.
 
 ### Fixed
+- reemplaza icono invisible del modulo cachyos-update
+- coma segura en multi-linea, elimina rama muerta y sincroniza test
+- registrar custom/cachyos-update en modules-right multilinea
+- insertar coma antes del comentario inline al fusionar bloque
+- progreso en vivo, motivo en partial y coma con comentario inline
+- waybar JSONC valido, journalctl antes del oneshot, escritura atomica y estado partial
 - activar nvidia-drm.modeset=1 via drop-in limine-entry-tool
 - usar TARGET_USER/HOME bajo sudo y documentar AUR automático
 - configurar AUR automático y permisos de resumen
