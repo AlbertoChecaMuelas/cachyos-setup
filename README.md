@@ -280,8 +280,54 @@ una terminal flotante. Patrón de terminal: usa
 disponible (mismo patrón que el resto del repo); en caso contrario
 degrada a `${TERMINAL:-alacritty}`.
 
+El visor muestra dos bloques:
+
+- **Última actualización del sistema** (cachyos-update): fecha,
+  resultado (`success`/`partial`/`failure`), motivo si lo hubo,
+  paquetes actualizados y si conviene reiniciar.
+- **Comprobación de omarchy-on-cachyos**: fecha de la última
+  comprobación, versiones local y remota, y si hay actualización
+  pendiente. Si el script `check-omarchy-update.sh` aún no ha
+  escrito su estado, el bloque aparece como "aún no comprobado".
+
+Al pie del visor se recuerda explícitamente que la instalación de
+una nueva versión de omarchy es **manual** y **fuera de este repo**:
+aquí solo se informa del estado.
+
 Sin registro todavía, imprime "No hay ningún registro de actualización
-todavía." y sale sin error.
+todavía." para el bloque de cachyos-update y sale sin error.
+
+#### Comprobación bajo demanda de omarchy
+
+Dentro de la ventana flotante del visor se muestra un prompt:
+
+    [c] Comprobar omarchy ahora   [Enter] Cerrar >
+
+Pulsar `c` ejecuta `check-omarchy-update.sh` directamente (user-level,
+sin `pkexec`: el servicio `omarchy-check` es user-level y solo hace
+lectura de red), refresca `omarchy-check.env` con el resultado de la
+comprobación y re-renderiza el bloque de omarchy en la **misma
+ventana** sin cerrarla. Pulsar `Enter` (o dejar la entrada vacía)
+cierra la ventana.
+
+#### Estado durable de omarchy (`omarchy-check.env`)
+
+`check-omarchy-update.sh` escribe, al final de cada comprobación, un
+fichero sourceable en el state dir user-level
+(`$HOME/.local/state/cachyos-setup/omarchy-check.env`) con estas
+4 claves:
+
+- `OMARCHY_CHECK_TIMESTAMP` (fecha ISO-8601 de la comprobación).
+- `OMARCHY_LOCAL_VERSION` (versión local, vacía si no hay tag).
+- `OMARCHY_REMOTE_VERSION` (última versión upstream).
+- `OMARCHY_UPDATE_AVAILABLE` (`true`/`false`).
+
+La escritura es atómica (temporal + `mv`) y se ejecuta siempre, incluso
+en las ramas de borde (directorio local inexistente, upstream ilegible):
+el env queda completo y sourceable en cualquier estado, con
+`OMARCHY_UPDATE_AVAILABLE="false"` cuando no se puede determinar. Este
+fichero es **adicional** al log append-only `omarchy-check.log`, que se
+mantiene intacto.
 
 ### Disparo manual `update-now.sh`
 
