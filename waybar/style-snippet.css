@@ -1,0 +1,9 @@
+/* Fragmento de estilos para el modulo de acceso a CachyOS Update
+   en waybar. Lo despliega install.sh con merge idempotente
+   delimitado por los marcadores
+   >>> cachyos-setup update module >>> / <<< ... <<< dentro de
+   ~/.config/waybar/style.css. */
+#custom-cachyos-update {
+    padding: 0 10px;
+    color: #a6e3a1;
+}

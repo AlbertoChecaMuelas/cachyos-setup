@@ -1,0 +1,14 @@
+// Fragmento de waybar para el modulo de acceso a CachyOS Update.
+// Lo despliega install.sh con merge idempentente delimitado por los
+// marcadores >>> cachyos-setup update module >>> / <<< ... <<<
+// dentro del objeto raiz de ~/.config/waybar/config.jsonc (NO en un
+// nivel anidado). La ruta @SCRIPTS_DIR@ se sustituye por la ruta
+// real del repo en tiempo de instalacion (mismo patron que los
+// units systemd del repo).
+"custom/cachyos-update": {
+    "format": "",
+    "tooltip-format": "Actualización CachyOS + omarchy-on-cachyos\nClick izq: ver último resultado y estado de omarchy\nClick der: actualizar cachyos ahora",
+    "on-click": "@SCRIPTS_DIR@/show-last-run.sh",
+    "on-click-right": "@SCRIPTS_DIR@/update-now.sh",
+    "interval": "once"
+}

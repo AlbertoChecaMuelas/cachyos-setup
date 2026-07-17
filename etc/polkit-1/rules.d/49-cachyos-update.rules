@@ -1,0 +1,9 @@
+// Autoriza a los miembros del grupo wheel a iniciar cachyos-update.service
+// sin contrasena, alineado con la eliminacion de sudoers NOPASSWD del repo.
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") == "cachyos-update.service" &&
+        subject.isInGroup("wheel")) {
+        return polkit.Result.YES;
+    }
+});
