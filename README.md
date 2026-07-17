@@ -187,7 +187,7 @@ editando los units instalados en `~/.config/systemd/user/` y reejecutando
 | Variable | Default | Override |
 |---|---|---|
 | `OMARCHY_DIR` | `%h/repos/forks/omarchy-on-cachyos` | ruta local de tu fork de omarchy |
-| `OMARCHY_URL` | `https://github.com/mroboff/omarchy-on-cachyos.git` | URL del upstream que quieres seguir |
+| `OMARCHY_URL` | `https://github.com/AlbertoChecaMuelas/omarchy-on-cachyos.git` | URL del upstream que quieres seguir |
 
 Tras `./install.sh`, edita `~/.config/systemd/user/omarchy-check.service`,
 cambia las líneas `Environment=OMARCHY_DIR=` y `Environment=OMARCHY_URL=`

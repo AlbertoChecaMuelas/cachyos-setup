@@ -176,6 +176,7 @@ if [[ "${CACHYOS_INLINE:-0}" == "1" ]]; then
                 reinstall_allowed_now="true"
             fi
         fi
+        # Divergencia intencional respecto al patron inline de «u»: «r» es una reinstalacion interactiva que toma la terminal, por eso se traspasa el proceso con exec en vez de volver al bucle; re-renderizar mostraria estado de gating (OMARCHY_REINSTALL_ALLOWED / OMARCHY_UPDATE_AVAILABLE) potencialmente obsoleto, ya que solo lo recalcula la comprobacion programada.
         if [[ "$reinstall_allowed_now" == "true" ]]; then
             if [[ -x "$reinstall_script" ]]; then
                 exec "$reinstall_script"
