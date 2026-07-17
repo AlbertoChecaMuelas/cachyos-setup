@@ -110,7 +110,7 @@ if [[ "${CACHYOS_INLINE:-0}" == "1" ]]; then
       exit 0
     fi
     case "${action:-}" in
-      c|C|r|R)
+      c|C)
         echo
         echo "Comprobando omarchy..."
         if [[ -x "$CHECK_OMARCHY_SCRIPT" ]]; then

@@ -13,7 +13,6 @@ notify() { notify-send --app-name="Omarchy" --urgency="$1" "$2" "$3" || true; }
 local_version=""
 remote_version=""
 update_available="false"
-check_reason=""
 
 write_omarchy_state() {
     # Escritura atomica: tmp en el mismo dir + mv -f. Replica el
@@ -37,7 +36,6 @@ echo "===== Check omarchy: $(date '+%Y-%m-%d %H:%M:%S') =====" >> "$LOG_FILE"
 # Rama de borde: OMARCHY_DIR inexistente o no es un repo git.
 if [[ ! -d "$OMARCHY_DIR/.git" ]]; then
     echo "No existe $OMARCHY_DIR" >> "$LOG_FILE"
-    check_reason="OMARCHY_DIR inexistente"
     write_omarchy_state
     exit 0
 fi
@@ -51,7 +49,6 @@ echo "Versión upstream: $remote_version" >> "$LOG_FILE"
 # Rama de borde: upstream ilegible.
 if [[ -z "$remote_version" ]]; then
     echo "No se pudo leer upstream" >> "$LOG_FILE"
-    check_reason="upstream ilegible"
     write_omarchy_state
     exit 0
 fi
@@ -59,8 +56,9 @@ fi
 # Determinar si hay actualizacion pendiente. Tratamos el caso de
 # local sin tag como pendiente (es coherente con el script original
 # y refleja que el repo local no esta al dia). Un downgrade (local
-# mas nuevo que remoto) NO dispara aviso.
-if [[ -n "$remote_version" && "$local_version" != "$remote_version" ]]; then
+# mas nuevo que remoto) NO dispara aviso. El early-exit previo por
+# `remote_version` vacio garantiza que aqui siempre es no vacio.
+if [[ "$local_version" != "$remote_version" ]]; then
     if [[ -z "$local_version" ]]; then
         update_available="true"
     else
