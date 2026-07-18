@@ -45,7 +45,12 @@ run_update() {
       echo ">>> Se RECOMIENDA reiniciar el sistema (kernel/nvidia actualizados)."
     fi
   fi
-  read -rp "Pulsa Enter para cerrar..." _
+  # Pausa final solo cuando NO lo invoca el visor (que prefiere
+  # re-renderizar y devolver el control a su bucle). Default sin
+  # la variable = pausa intacta, comportamiento previo preservado.
+  if [[ "${CACHYOS_SKIP_PAUSE:-0}" != "1" ]]; then
+    read -rp "Pulsa Enter para cerrar..." _
+  fi
 }
 
 if [[ "${CACHYOS_INLINE:-0}" == "1" ]]; then

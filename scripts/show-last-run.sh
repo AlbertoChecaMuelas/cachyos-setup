@@ -29,6 +29,12 @@ OMARCHY_ENV_FILE="$OMARCHY_STATE_DIR/omarchy-check.env"
 # Localizacion del script de comprobacion junto al visor (mismo dir).
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHECK_OMARCHY_SCRIPT="$SCRIPTS_DIR/check-omarchy-update.sh"
+# Accion interactiva [u]: reutiliza update-now.sh INLINE con el guard
+# de salto de pausa. Asi el visor dispara la actualizacion y
+# re-renderiza al terminar sin abrir otra terminal flotante. No se
+# anyade pkexec nuevo: se reutiliza el de update-now.sh + polkit ya
+# desplegado.
+UPDATE_NOW_SCRIPT="$SCRIPTS_DIR/update-now.sh"
 
 render() {
   echo "== Última actualización del sistema =="
@@ -78,6 +84,7 @@ render() {
     echo "Local:     —"
     echo "Remota:    —"
     echo "Pendiente: —"
+    echo "Reinstal.: deshabilitada (aún no comprobado)"
   else
     # shellcheck source=/dev/null
     (
@@ -89,6 +96,24 @@ render() {
             echo "Pendiente: SÍ (actualización disponible)"
         else
             echo "Pendiente: no"
+        fi
+        # Linea de gate: versiones base del fork y decision de reinstalacion.
+        # base_supported: lo que declara el fork en
+        #   $OMARCHY_DIR/SUPPORTED_OMARCHY_VERSION.
+        # base_available: ultimo tag de basecamp/omarchy.
+        # base_installed: ~/.local/share/omarchy/version (solo contexto).
+        # reinstall_allowed: true SOLO si soportada == disponible.
+        local supported="${OMARCHY_BASE_SUPPORTED:-desconocida}"
+        local available="${OMARCHY_BASE_AVAILABLE:-desconocida}"
+        local installed="${OMARCHY_BASE_INSTALLED:-desconocida}"
+        [[ -z "$supported" ]] && supported="desconocida"
+        [[ -z "$available" ]] && available="desconocida"
+        [[ -z "$installed" ]] && installed="desconocida"
+        echo "Base sop.: $supported   Base disp.: $available   Base inst.: $installed"
+        if [[ "${OMARCHY_REINSTALL_ALLOWED:-false}" == "true" ]]; then
+            echo "Reinstal.: ACTIVA (fork declara soportar exactamente la base disponible)"
+        else
+            echo "Reinstal.: deshabilitada (fork no declara base o no coincide con la disponible)"
         fi
     )
   fi
@@ -104,7 +129,7 @@ if [[ "${CACHYOS_INLINE:-0}" == "1" ]]; then
   while true; do
     render
     echo
-    printf '%s' "[c] Comprobar omarchy ahora   [Enter] Cerrar > "
+    printf '%s' "[c] Comprobar omarchy ahora   [u] Actualizar cachyos ahora   [r] Reinstalar fork omarchy   [Enter] Cerrar > "
     if ! read -r action; then
       # EOF (p.ej. stdin cerrado en un test): salimos sin error.
       exit 0
@@ -117,6 +142,55 @@ if [[ "${CACHYOS_INLINE:-0}" == "1" ]]; then
           "$CHECK_OMARCHY_SCRIPT" || true
         else
           bash "$CHECK_OMARCHY_SCRIPT" || true
+        fi
+        echo
+        ;;
+      u|U)
+        echo
+        echo "Lanzando actualizacion manual..."
+        # Reutiliza la rama INLINE de update-now.sh (no la que abre
+        # otra terminal flotante). CACHYOS_INLINE=1 fuerza la rama
+        # run_update; CACHYOS_SKIP_PAUSE=1 evita que update-now.sh
+        # haga su propia pausa final y devuelva el control al bucle
+        # del visor para re-renderizar el estado.
+        if [[ -x "$UPDATE_NOW_SCRIPT" ]]; then
+          CACHYOS_INLINE=1 CACHYOS_SKIP_PAUSE=1 "$UPDATE_NOW_SCRIPT" || true
+        else
+          CACHYOS_INLINE=1 CACHYOS_SKIP_PAUSE=1 bash "$UPDATE_NOW_SCRIPT" || true
+        fi
+        echo
+        ;;
+      r|R)
+        echo
+        # Re-instalacion del fork omarchy-on-cachyos. Gate por version
+        # base: SOLO si el fork declara soportar exactamente la
+        # version base disponible (basecamp/omarchy). En otro caso la
+        # accion esta deshabilitada con un mensaje explicativo. Nunca
+        # se invoca `omarchy-update` nativo.
+        reinstall_script="${OMARCHY_DIR:-$HOME/repos/forks/omarchy-on-cachyos}/bin/install-omarchy-on-cachyos.sh"
+        reinstall_allowed_now="false"
+        if [[ -f "$OMARCHY_ENV_FILE" ]]; then
+            # shellcheck source=/dev/null
+            source "$OMARCHY_ENV_FILE"
+            if [[ "${OMARCHY_REINSTALL_ALLOWED:-false}" == "true" ]]; then
+                reinstall_allowed_now="true"
+            fi
+        fi
+        # Divergencia intencional respecto al patron inline de «u»: «r» es una reinstalacion interactiva que toma la terminal, por eso se traspasa el proceso con exec en vez de volver al bucle; re-renderizar mostraria estado de gating (OMARCHY_REINSTALL_ALLOWED / OMARCHY_UPDATE_AVAILABLE) potencialmente obsoleto, ya que solo lo recalcula la comprobacion programada.
+        if [[ "$reinstall_allowed_now" == "true" ]]; then
+            if [[ -x "$reinstall_script" ]]; then
+                exec "$reinstall_script"
+            elif [[ -f "$reinstall_script" ]]; then
+                exec bash "$reinstall_script"
+            else
+                echo "AVISO: el instalador del fork no se encuentra en $reinstall_script"
+                echo "       Clona/actualiza primero el fork AlbertoChecaMuelas/omarchy-on-cachyos."
+            fi
+        else
+            echo "Reinstalacion DESHABILITADA:"
+            echo "  el fork no declara SUPPORTED_OMARCHY_VERSION, o la version declarada"
+            echo "  no coincide con la ultima base disponible en basecamp/omarchy."
+            echo "  Para habilitarla: actualiza primero el fork a mano (fuera de este repo)."
         fi
         echo
         ;;

@@ -8,6 +8,8 @@ y este proyecto usa [versionado semántico](https://semver.org/lang/es/).
 ## [Unreleased]
 
 ### Added
+- gating de reinstalacion por version base del fork
+- anade accion [u] actualizar ahora reutilizando update-now.sh inline
 - mostrar estado y comprobación bajo demanda en el visor flotante
 - persistir estado durable sourceable de comprobación
 - registro durable, visor y disparo manual de actualizaciones con acceso desde waybar
@@ -32,6 +34,7 @@ y este proyecto usa [versionado semántico](https://semver.org/lang/es/).
 - README y PATH de notificaciones asumen que el script puede ejecutarse con TTY.
 
 ### Fixed
+- corrige remoto mroboff->AlbertoChecaMuelas en systemd y README
 - reemplaza icono invisible del modulo cachyos-update
 - coma segura en multi-linea, elimina rama muerta y sincroniza test
 - registrar custom/cachyos-update en modules-right multilinea

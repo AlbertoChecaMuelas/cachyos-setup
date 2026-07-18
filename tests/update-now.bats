@@ -105,3 +105,62 @@ EOF
   [[ "$output" == *"Resultado: partial"* ]]
   [[ "$output" == *"Motivo:    AUR no actualizado (ver log)"* ]]
 }
+
+@test "CACHYOS_SKIP_PAUSE=1 skips the final pause: exits 0 even with stdin closed" {
+  cat > "$STATE_DIR/last-run.env" << 'EOF'
+LAST_RUN_TIMESTAMP="2026-07-17T11:00:00"
+LAST_RUN_RESULT="success"
+LAST_RUN_FAIL_REASON=""
+LAST_RUN_REBOOT_NEEDED="false"
+LAST_RUN_PACKAGE_COUNT="1"
+EOF
+
+  run env PATH="$FAKE_BIN:$PATH" STATE_DIR="$STATE_DIR" JOURNAL_PID_FILE="$JOURNAL_PID_FILE" \
+    PKEXEC_EXIT_CODE=0 CACHYOS_INLINE=1 CACHYOS_SKIP_PAUSE=1 \
+    bash -c "bash '$SCRIPT' </dev/null"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Pulsa Enter"* ]]
+  [[ "$output" == *"Resultado: success"* ]]
+}
+
+@test "without CACHYOS_SKIP_PAUSE (unset), the final pause still runs exactly as before" {
+  # bash's `read -p` prompt is only ever displayed on a real terminal
+  # (never under bats' piped stdin), so we cannot assert on the
+  # prompt text itself. Instead we prove the read genuinely executes:
+  # with stdin fully closed, an un-guarded `read` at EOF returns
+  # non-zero and, under `set -e`, aborts the script — the exact
+  # opposite of the CACHYOS_SKIP_PAUSE=1 case above, which exits 0
+  # under the very same closed-stdin condition.
+  cat > "$STATE_DIR/last-run.env" << 'EOF'
+LAST_RUN_TIMESTAMP="2026-07-17T11:05:00"
+LAST_RUN_RESULT="success"
+LAST_RUN_FAIL_REASON=""
+LAST_RUN_REBOOT_NEEDED="false"
+LAST_RUN_PACKAGE_COUNT="1"
+EOF
+
+  run env PATH="$FAKE_BIN:$PATH" STATE_DIR="$STATE_DIR" JOURNAL_PID_FILE="$JOURNAL_PID_FILE" \
+    PKEXEC_EXIT_CODE=0 CACHYOS_INLINE=1 \
+    bash -c "bash '$SCRIPT' </dev/null"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Resultado: success"* ]]
+}
+
+@test "CACHYOS_SKIP_PAUSE=0 behaves the same as unset: the pause still runs" {
+  # Same reasoning as the "unset" case above: closed stdin makes the
+  # un-guarded final read fail and abort the script under set -e,
+  # proving the pause is actually reached when the guard is =0.
+  cat > "$STATE_DIR/last-run.env" << 'EOF'
+LAST_RUN_TIMESTAMP="2026-07-17T11:06:00"
+LAST_RUN_RESULT="success"
+LAST_RUN_FAIL_REASON=""
+LAST_RUN_REBOOT_NEEDED="false"
+LAST_RUN_PACKAGE_COUNT="1"
+EOF
+
+  run env PATH="$FAKE_BIN:$PATH" STATE_DIR="$STATE_DIR" JOURNAL_PID_FILE="$JOURNAL_PID_FILE" \
+    PKEXEC_EXIT_CODE=0 CACHYOS_INLINE=1 CACHYOS_SKIP_PAUSE=0 \
+    bash -c "bash '$SCRIPT' </dev/null"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Resultado: success"* ]]
+}

@@ -187,7 +187,7 @@ editando los units instalados en `~/.config/systemd/user/` y reejecutando
 | Variable | Default | Override |
 |---|---|---|
 | `OMARCHY_DIR` | `%h/repos/forks/omarchy-on-cachyos` | ruta local de tu fork de omarchy |
-| `OMARCHY_URL` | `https://github.com/mroboff/omarchy-on-cachyos.git` | URL del upstream que quieres seguir |
+| `OMARCHY_URL` | `https://github.com/AlbertoChecaMuelas/omarchy-on-cachyos.git` | URL del upstream que quieres seguir |
 
 Tras `./install.sh`, edita `~/.config/systemd/user/omarchy-check.service`,
 cambia las líneas `Environment=OMARCHY_DIR=` y `Environment=OMARCHY_URL=`
@@ -297,37 +297,110 @@ aquí solo se informa del estado.
 Sin registro todavía, imprime "No hay ningún registro de actualización
 todavía." para el bloque de cachyos-update y sale sin error.
 
-#### Comprobación bajo demanda de omarchy
+#### Acciones interactivas en el visor
 
 Dentro de la ventana flotante del visor se muestra un prompt:
 
-    [c] Comprobar omarchy ahora   [Enter] Cerrar >
+    [c] Comprobar omarchy ahora   [u] Actualizar cachyos ahora   [r] Reinstalar fork omarchy   [Enter] Cerrar >
 
-Pulsar `c` ejecuta `check-omarchy-update.sh` directamente (user-level,
-sin `pkexec`: el servicio `omarchy-check` es user-level y solo hace
-lectura de red), refresca `omarchy-check.env` con el resultado de la
-comprobación y re-renderiza el bloque de omarchy en la **misma
-ventana** sin cerrarla. Pulsar `Enter` (o dejar la entrada vacía)
-cierra la ventana.
+- `c` ejecuta `check-omarchy-update.sh` directamente (user-level, sin
+  `pkexec`: el servicio `omarchy-check` es user-level y solo hace
+  lectura de red), refresca `omarchy-check.env` con el resultado de la
+  comprobación y re-renderiza el bloque de omarchy en la **misma
+  ventana** sin cerrarla.
+- `u` lanza la actualización del sistema reutilizando `update-now.sh`
+  **inline** dentro de la misma ventana flotante. La acción escala
+  privilegios con el `pkexec` ya existente de `update-now.sh` (sin
+  añadir un `pkexec` nuevo ni relajar el polkit) y muestra el progreso
+  en vivo del `oneshot`. Al terminar, el visor re-renderiza el bloque
+  de "Última actualización" — `update-now.sh` salta su pausa final de
+  cierre (variable de entorno `CACHYOS_SKIP_PAUSE`) para devolver el
+  control al bucle.
+- `r` **reinstalar el fork `omarchy-on-cachyos`** vía el instalador del
+  propio fork (`$OMARCHY_DIR/bin/install-omarchy-on-cachyos.sh`,
+  interactivo). **Solo está activa cuando el fork declara soportar
+  exactamente la versión base disponible** (ver gating más abajo); en
+  cualquier otro caso la acción aparece visible pero deshabilitada con
+  un mensaje explicativo, y nunca invoca `omarchy-update` nativo.
+- Pulsar `Enter` (o dejar la entrada vacía) cierra la ventana.
+
+> Cambio de diseño: el visor, hasta ahora de solo lectura, pasa a
+> poder disparar acciones que escalan privilegios. **No se añade
+> `pkexec` nuevo**: se reutiliza el de `update-now.sh`, que ya está
+> sujeto a la regla polkit
+> `etc/polkit-1/rules.d/49-cachyos-update.rules`. La superficie de
+> privilegios no se amplía: el click-derecha del módulo waybar (que
+> ya invocaba `update-now.sh`) y la tecla `u` del visor comparten la
+> misma acción y el mismo `pkexec`. La tecla `r` no escala privilegios
+> por sí misma (el instalador del fork gestiona sus propios sudo).
 
 #### Estado durable de omarchy (`omarchy-check.env`)
 
 `check-omarchy-update.sh` escribe, al final de cada comprobación, un
 fichero sourceable en el state dir user-level
 (`$HOME/.local/state/cachyos-setup/omarchy-check.env`) con estas
-4 claves:
+**8 claves**, emitidas SIEMPRE (incluidas las ramas de early-exit del
+script):
 
 - `OMARCHY_CHECK_TIMESTAMP` (fecha ISO-8601 de la comprobación).
 - `OMARCHY_LOCAL_VERSION` (versión local, vacía si no hay tag).
-- `OMARCHY_REMOTE_VERSION` (última versión upstream).
-- `OMARCHY_UPDATE_AVAILABLE` (`true`/`false`).
+- `OMARCHY_REMOTE_VERSION` (última versión upstream del fork).
+- `OMARCHY_UPDATE_AVAILABLE` (`true`/`false`, indica si hay un tag más
+  nuevo en el upstream).
+- `OMARCHY_BASE_SUPPORTED` — versión base de omarchy que el fork
+  declara soportar (texto plano en
+  `$OMARCHY_DIR/SUPPORTED_OMARCHY_VERSION`, normalizada sin prefijo
+  `v`).
+- `OMARCHY_BASE_AVAILABLE` — versión base disponible = último tag de
+  `basecamp/omarchy` (normalizada sin prefijo `v`).
+- `OMARCHY_BASE_INSTALLED` — versión base instalada en
+  `~/.local/share/omarchy/version` (solo contexto informativo; no
+  participa en la decisión del gate).
+- `OMARCHY_REINSTALL_ALLOWED` (`true`/`false`) — decisión computada del
+  gate de reinstalación (ver siguiente sección).
 
 La escritura es atómica (temporal + `mv`) y se ejecuta siempre, incluso
 en las ramas de borde (directorio local inexistente, upstream ilegible):
 el env queda completo y sourceable en cualquier estado, con
-`OMARCHY_UPDATE_AVAILABLE="false"` cuando no se puede determinar. Este
-fichero es **adicional** al log append-only `omarchy-check.log`, que se
-mantiene intacto.
+`OMARCHY_UPDATE_AVAILABLE="false"` y `OMARCHY_REINSTALL_ALLOWED="false"`
+cuando no se puede determinar. Este fichero es **adicional** al log
+append-only `omarchy-check.log`, que se mantiene intacto.
+
+#### Gating de reinstalación del fork
+
+La acción `r` del visor está **gated** por la versión base que el fork
+declara soportar. El contrato es:
+
+- **Fuente de la versión soportada:** el fork publica en su raíz un
+  fichero de texto plano de una sola línea llamado
+  `SUPPORTED_OMARCHY_VERSION`, con la versión normalizada sin prefijo
+  `v` (p. ej. `3.8.3`). `check-omarchy-update.sh` lo lee del clon local
+  `$OMARCHY_DIR` con `head -n1` — **nunca** se hace `source` del
+  fichero, para no ejecutar código del fork.
+- **Versión disponible:** último tag de `basecamp/omarchy` (upstream
+  de omarchy).
+- **Regla del gate:** `OMARCHY_REINSTALL_ALLOWED` se computa a `true`
+  solo cuando la versión declarada por el fork es exactamente igual a
+  la última versión disponible. La versión instalada es solo contexto
+  informativo.
+- **Fallback seguro:** si `SUPPORTED_OMARCHY_VERSION` no existe o está
+  vacío en el fork, o si no se puede leer la versión disponible,
+  entonces `OMARCHY_REINSTALL_ALLOWED="false"` y la acción aparece
+  deshabilitada. **Nunca** se ofrece reinstalación activa con datos
+  incompletos.
+
+Por diseño, mientras el fork no declare su versión soportada
+(independiente del repo `cachyos-setup`), la acción `r` está
+deshabilitada y el visor lo indica. Habilitarla requiere primero
+actualizar el fork a una versión que coincida con la base disponible
+(`SUPPORTED_OMARCHY_VERSION` = último tag de `basecamp/omarchy`), paso
+que se hace **fuera de este repo**.
+
+> Limitación preexistente (no abordada aquí): `check-omarchy-update.sh`
+> detecta "actualización del fork disponible" comparando TAGS. Si el
+> HEAD del fork va por delante del último tag, la herramienta puede
+> infra-reportar; es comportamiento existente, no se corrige en este
+> plan.
 
 ### Disparo manual `update-now.sh`
 

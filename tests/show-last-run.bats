@@ -152,3 +152,76 @@ EOF
 
   [ -f "$OMARCHY_STATE_DIR/omarchy-check.env" ]
 }
+
+@test "interactive [u] action takes the INLINE branch of update-now.sh, never the floating-terminal relaunch" {
+  # journalctl/pkexec stubs so the real update-now.sh (invoked by the
+  # [u] action) runs its inline flow with no real privilege
+  # escalation — same stub pattern as tests/update-now.bats.
+  local fake_bin="$BATS_TEST_TMPDIR/fakebin"
+  mkdir -p "$fake_bin"
+  cat > "$fake_bin/journalctl" << 'EOF'
+#!/usr/bin/env bash
+echo "journal: fake live progress line"
+while true; do sleep 0.05; done
+EOF
+  chmod +x "$fake_bin/journalctl"
+  cat > "$fake_bin/pkexec" << 'EOF'
+#!/usr/bin/env bash
+sleep 0.1
+exit 0
+EOF
+  chmod +x "$fake_bin/pkexec"
+
+  cat > "$STATE_DIR/last-run.env" << 'EOF'
+LAST_RUN_TIMESTAMP="2026-07-17T11:00:00"
+LAST_RUN_RESULT="success"
+LAST_RUN_FAIL_REASON=""
+LAST_RUN_REBOOT_NEEDED="false"
+LAST_RUN_PACKAGE_COUNT="2"
+EOF
+
+  # First "u" triggers the real update-now.sh inline; an empty line
+  # then closes the visor on the second loop iteration.
+  run env PATH="$fake_bin:$PATH" STATE_DIR="$STATE_DIR" OMARCHY_STATE_DIR="$OMARCHY_STATE_DIR" \
+    CACHYOS_INLINE=1 \
+    bash -c "printf 'u\n\n' | bash '$SCRIPT'"
+  [ "$status" -eq 0 ]
+
+  [[ "$output" == *"Lanzando actualizacion manual..."* ]]
+  # Proves the INLINE branch of update-now.sh actually ran here (its
+  # journalctl/pkexec stubs executed and last-run.env was read and
+  # shown) — the floating-terminal relaunch branch never produces
+  # this output synchronously in the same process.
+  [[ "$output" == *"journal: fake live progress line"* ]]
+  [[ "$output" == *"Resultado: success"* ]]
+  # The visor's loop kept running afterwards and re-rendered its own
+  # state (the header appears once for the initial render, once more
+  # for the re-render after the action).
+  [ "$(grep -c '== Última actualización del sistema ==' <<< "$output")" -eq 2 ]
+}
+
+@test "interactive [u] action: a non-zero exit code from the invoked script does not break the loop" {
+  # Isolated copy of show-last-run.sh alongside a stub update-now.sh
+  # that simulates a failing invocation (rc=7). SCRIPTS_DIR/
+  # UPDATE_NOW_SCRIPT are resolved relative to the script's own
+  # location, so copying both files together lets us control the
+  # invoked script's exit code without touching the real repo files.
+  local copy_dir="$BATS_TEST_TMPDIR/scriptscopy"
+  mkdir -p "$copy_dir"
+  cp "$SCRIPT" "$copy_dir/show-last-run.sh"
+  cat > "$copy_dir/update-now.sh" << 'EOF'
+#!/usr/bin/env bash
+echo "fake update-now.sh ran and is about to fail"
+exit 7
+EOF
+  chmod +x "$copy_dir/update-now.sh"
+
+  run env STATE_DIR="$STATE_DIR" OMARCHY_STATE_DIR="$OMARCHY_STATE_DIR" \
+    CACHYOS_INLINE=1 \
+    bash -c "printf 'u\n\n' | bash '$copy_dir/show-last-run.sh'"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"fake update-now.sh ran and is about to fail"* ]]
+  # The non-zero rc (7) did not abort the loop: it re-rendered and
+  # then exited cleanly on the following Enter.
+  [ "$(grep -c '== Última actualización del sistema ==' <<< "$output")" -eq 2 ]
+}
