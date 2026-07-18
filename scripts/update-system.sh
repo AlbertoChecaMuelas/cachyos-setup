@@ -120,13 +120,16 @@ if [[ -n "${CACHYOS_USER:-}" && -z "${SUDO_USER:-}" ]] && [[ -z "$RUN_AS" ]]; th
     aur_failed=1
 elif command -v aur >/dev/null 2>&1; then
     echo "--- aur sync -u ---" >> "$LOG_FILE"
-    # --noinstall: solo construir, NO instalar. La instalacion la hace
-    # el pacman -Syu posterior desde el repo local. Asi evitamos que
-    # aurutils invoque sudo internamente (falla sin TTY).
-    # --localrepo: aurutils usa por defecto ~/.cache/aursync; lo
-    # forzamos a /var/lib/aur-repo (registrado en pacman.conf) para
-    # que pacman -Syu resuelva desde ahi.
-    if run_as timeout 1800 aur sync -u --noconfirm --no-view --noinstall --localrepo "$AUR_REPO_DIR" \
+    # aur sync (aurutils) SOLO construye y anade los paquetes al repo
+    # local; no instala nada en el sistema (eso lo confirma aur-build:
+    # "Build packages adding the results to a local repository"). Por
+    # tanto no hace falta ninguna flag para evitar la instalacion: el
+    # pacman -Syu posterior es quien instala desde el repo local. Asi
+    # evitamos ademas que aurutils invoque sudo internamente (falla sin
+    # TTY).
+    # -d aur-local: nombre del repo pacman local (registrado en
+    # /etc/pacman.conf). --root: ruta fisica del repo, /var/lib/aur-repo.
+    if run_as timeout 1800 aur sync -u --noconfirm --no-view -d aur-local --root "$AUR_REPO_DIR" \
             > >(tee -a "$LOG_FILE" >> "$CURRENT_RUN_LOG") 2>&1; then
         # aur sync imprime ':: Sincronizando paquetes AUR...' seguido de
         # ':: Starting build de <pkg>...'. Extraemos los nombres de
@@ -146,7 +149,11 @@ echo "--- pacman -Syu ---" >> "$LOG_FILE"
 # pacman corre como root directamente (system service ya es root, o sudo
 # desde terminal eleva a root). No usa sudo dentro del script. El log
 # de esta corrida va a $CURRENT_RUN_LOG ademas del acumulado.
-if ! pacman -Syu --noconfirm > >(tee -a "$LOG_FILE" >> "$CURRENT_RUN_LOG") 2>&1; then
+# Forzamos locale C para que la salida de pacman sea siempre en ingles
+# ("upgrading"/"upgraded"), con independencia del locale del sistema
+# (p.ej. es_ES produce "actualizando"/"actualizado"). El parseo de mas
+# abajo depende de que estas cadenas esten en ingles.
+if ! LC_ALL=C LANG=C pacman -Syu --noconfirm > >(tee -a "$LOG_FILE" >> "$CURRENT_RUN_LOG") 2>&1; then
     notify critical "Error al actualizar (pacman)" "Revisa $LOG_FILE"
     write_summary "Error al actualizar (pacman)" "Revisa $LOG_FILE"
     write_last_run_record "failure" "pacman -Syu fallo" "false" "0" ""
