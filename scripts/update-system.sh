@@ -247,6 +247,10 @@ elif [[ "$aur_failed" -eq 1 ]]; then
     body="AUR no actualizado (ver $LOG_FILE)."
     notify normal "AUR pendiente" "$body"
     write_summary "AUR pendiente" "$body"
+else
+    body="Sin cambios pendientes."
+    notify normal "Sistema al día" "$body"
+    write_summary "Sistema al día" "$body"
 fi
 
 if [[ "$total" -gt 0 ]] && command -v needrestart >/dev/null 2>&1; then
