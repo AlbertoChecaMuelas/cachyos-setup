@@ -120,16 +120,17 @@ if [[ -n "${CACHYOS_USER:-}" && -z "${SUDO_USER:-}" ]] && [[ -z "$RUN_AS" ]]; th
     aur_failed=1
 elif command -v aur >/dev/null 2>&1; then
     echo "--- aur sync -u ---" >> "$LOG_FILE"
-    # aur sync (aurutils) SOLO construye y anade los paquetes al repo
-    # local; no instala nada en el sistema (eso lo confirma aur-build:
-    # "Build packages adding the results to a local repository"). Por
-    # tanto no hace falta ninguna flag para evitar la instalacion: el
-    # pacman -Syu posterior es quien instala desde el repo local. Asi
-    # evitamos ademas que aurutils invoque sudo internamente (falla sin
-    # TTY).
+    # aur sync (aurutils), tras compilar y hacer repo-add, por defecto
+    # ejecuta ademas internamente "sudo pacsync" + "sudo pacman -S
+    # --noconfirm" para refrescar la db del repo local e instalarlo.
+    # Bajo runuser sin TTY/askpass ese sudo interno falla ("a terminal
+    # is required to read the password"). Usamos --no-sync para que
+    # aurutils SOLO compile y haga repo-add, sin ese bloque de sudo; el
+    # refresco de la db aur-local y la instalacion quedan a cargo del
+    # pacman -Syu de root que se ejecuta despues en este mismo script.
     # -d aur-local: nombre del repo pacman local (registrado en
     # /etc/pacman.conf). --root: ruta fisica del repo, /var/lib/aur-repo.
-    if run_as timeout 1800 aur sync -u --noconfirm --no-view -d aur-local --root "$AUR_REPO_DIR" \
+    if run_as timeout 1800 aur sync -u --noconfirm --no-view --no-sync -d aur-local --root "$AUR_REPO_DIR" \
             > >(tee -a "$LOG_FILE" >> "$CURRENT_RUN_LOG") 2>&1; then
         # aur sync imprime ':: Sincronizando paquetes AUR...' seguido de
         # ':: Starting build de <pkg>...'. Extraemos los nombres de
