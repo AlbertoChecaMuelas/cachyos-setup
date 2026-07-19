@@ -261,12 +261,15 @@ elif [[ "$aur_failed" -eq 1 ]]; then
     notify normal "AUR pendiente" "$body"
     write_summary "AUR pendiente" "$body"
 else
-    # Sin cambios: NO notificamos para no generar spam de popups en cada
-    # corrida periodica del timer ni en cada lanzamiento manual desde el
-    # visor. El registro durable (write_summary) ya da visibilidad via
-    # visor/waybar; los fallos siguen notificando aparte.
-    body="Sin cambios pendientes."
-    write_summary "Sistema al día" "$body"
+    # Sin cambios: NO notificamos (ni via notify-send ni via write_summary)
+    # para no generar spam de popups en cada corrida periodica del timer ni
+    # en cada lanzamiento manual desde el visor. write_summary() escribe
+    # last-summary.txt, que show-update-summary.sh muestra como popup en
+    # cada login grafico (autostart XDG), asi que llamarla aqui solo
+    # diferiria el spam al proximo login. La visibilidad durable para el
+    # visor/waybar la da write_last_run_record() (mas abajo, incondicional),
+    # no write_summary; los fallos siguen notificando aparte.
+    :
 fi
 
 if [[ "$total" -gt 0 ]] && command -v needrestart >/dev/null 2>&1; then
