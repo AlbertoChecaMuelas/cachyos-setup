@@ -153,10 +153,42 @@ echo "--- pacman -Syu ---" >> "$LOG_FILE"
 # ("upgrading"/"upgraded"), con independencia del locale del sistema
 # (p.ej. es_ES produce "actualizando"/"actualizado"). El parseo de mas
 # abajo depende de que estas cadenas esten en ingles.
-if ! LC_ALL=C LANG=C pacman -Syu --noconfirm > >(tee -a "$LOG_FILE" >> "$CURRENT_RUN_LOG") 2>&1; then
-    notify critical "Error al actualizar (pacman)" "Revisa $LOG_FILE"
-    write_summary "Error al actualizar (pacman)" "Revisa $LOG_FILE"
-    write_last_run_record "failure" "pacman -Syu fallo" "false" "0" ""
+#
+# Reintentos con backoff: muchos fallos de "pacman -Syu" son transitorios
+# (caida puntual de red/DNS del mirror) y desaparecen solos a los pocos
+# segundos. En vez de rendirnos al primer fallo, reintentamos hasta
+# PACMAN_MAX_ATTEMPTS veces con una espera de PACMAN_RETRY_WAIT segundos
+# entre intentos. Solo si el ultimo intento tambien falla se considera la
+# corrida como fallida de verdad.
+PACMAN_MAX_ATTEMPTS=3
+PACMAN_RETRY_WAIT=20
+# Patrones tipicos de fallo transitorio de red/DNS en la salida de pacman.
+# Si el fallo final coincide con alguno, notificamos y registramos el
+# motivo como conectividad en vez de como error real de pacman, para no
+# confundir al usuario.
+PACMAN_NETWORK_FAIL_PATTERN='Could not resolve host|failed to synchronize all databases|failed to retrieve some files|Temporary failure in name resolution'
+pacman_ok=0
+for attempt in $(seq 1 "$PACMAN_MAX_ATTEMPTS"); do
+    if LC_ALL=C LANG=C pacman -Syu --noconfirm > >(tee -a "$LOG_FILE" >> "$CURRENT_RUN_LOG") 2>&1; then
+        pacman_ok=1
+        break
+    fi
+    if [[ "$attempt" -lt "$PACMAN_MAX_ATTEMPTS" ]]; then
+        echo "(pacman -Syu fallo, intento $attempt/$PACMAN_MAX_ATTEMPTS; reintentando en ${PACMAN_RETRY_WAIT}s)" >> "$LOG_FILE"
+        sleep "$PACMAN_RETRY_WAIT"
+    fi
+done
+
+if [[ "$pacman_ok" -ne 1 ]]; then
+    if grep -qiE "$PACMAN_NETWORK_FAIL_PATTERN" "$CURRENT_RUN_LOG"; then
+        notify critical "Error de red al actualizar (pacman)" "Fallo de conectividad tras $PACMAN_MAX_ATTEMPTS intentos. Revisa $LOG_FILE"
+        write_summary "Error de red al actualizar (pacman)" "Fallo de conectividad tras $PACMAN_MAX_ATTEMPTS intentos. Revisa $LOG_FILE"
+        write_last_run_record "failure" "pacman -Syu fallo (red/DNS)" "false" "0" ""
+    else
+        notify critical "Error al actualizar (pacman)" "Revisa $LOG_FILE"
+        write_summary "Error al actualizar (pacman)" "Revisa $LOG_FILE"
+        write_last_run_record "failure" "pacman -Syu fallo" "false" "0" ""
+    fi
     exit 1
 fi
 

@@ -1,5 +1,8 @@
 [Unit]
 Description=Actualiza el sistema CachyOS (pacman + yay) y notifica
+# After/Wants=network-online.target NO protege en un disparo por resume de
+# hibernacion: ese target ya quedo "alcanzado" en el boot original y no se
+# reevalua al reanudar. La proteccion real esta en los ExecStartPre de abajo.
 After=network-online.target
 Wants=network-online.target
 
@@ -9,5 +12,13 @@ Environment=HOME=/home/@USER@
 Environment=CACHYOS_SETUP_STATE_DIR=/var/lib/cachyos-setup
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/@UID@/bus
 Environment=CACHYOS_USER=@USER@
-ExecStartPre=/usr/bin/nm-online -q --timeout=60
+# nm-online -s espera a que NetworkManager termine de (re)construir la red
+# (startup-complete), evitando el falso positivo "connected" que reporta
+# brevemente tras un resume de hibernacion antes de tirar la interfaz.
+ExecStartPre=/usr/bin/nm-online -s -q --timeout=60
+# Sondea DNS real (hasta 60s) para confirmar que la red esta operativa de
+# verdad, no solo que NetworkManager la reporte "connected". Si tras 60s
+# sigue sin resolver, no aborta la unidad (exit 0): el reintento con backoff
+# de update-system.sh es la ultima red de seguridad.
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do getent hosts geo.mirror.pkgbuild.com >/dev/null 2>&1 && exit 0; sleep 2; done; exit 0'
 ExecStart=@SCRIPTS_DIR@/update-system.sh
