@@ -7,6 +7,13 @@ LOG_FILE="$STATE_DIR/update.log"
 # Log efimero de la ejecucion actual; se trunca en cada corrida. Se
 # mantiene $LOG_FILE con >> (acumulativo historico) para diagnostico.
 CURRENT_RUN_LOG="$STATE_DIR/current-run.log"
+# Subconjunto de CURRENT_RUN_LOG con SOLO la salida de "pacman -Syu" (sin
+# la seccion previa de "aur sync"/makepkg). CURRENT_RUN_LOG mezcla ambas
+# secciones en un unico log combinado, y makepkg puede imprimir sus
+# propias lineas "upgrading <pkg>" al compilar build-deps de AUR; sin
+# este fichero separado, esas lineas se contarian como actualizaciones
+# oficiales de pacman. Se trunca justo antes de lanzar pacman -Syu.
+PACMAN_RUN_LOG="$STATE_DIR/pacman-run.log"
 SUMMARY_FILE="$STATE_DIR/last-summary.txt"
 # Repo local donde aur sync deposita los paquetes AUR para que el
 # pacman -Syu posterior los instale. Debe coincidir con el path
@@ -130,14 +137,15 @@ elif command -v aur >/dev/null 2>&1; then
     # pacman -Syu de root que se ejecuta despues en este mismo script.
     # -d aur-local: nombre del repo pacman local (registrado en
     # /etc/pacman.conf). --root: ruta fisica del repo, /var/lib/aur-repo.
-    if run_as timeout 1800 aur sync -u --noconfirm --no-view --no-sync -d aur-local --root "$AUR_REPO_DIR" \
+    if run_as env LC_ALL=C LANG=C timeout 1800 aur sync -u --noconfirm --no-view --no-sync -d aur-local --root "$AUR_REPO_DIR" \
             > >(tee -a "$LOG_FILE" >> "$CURRENT_RUN_LOG") 2>&1; then
-        # makepkg imprime '==> Creando el paquete: <pkg> <version> (...)'
-        # en locale es o '==> Making package: <pkg> <version> (...)' en en.
+        # Forzamos locale C via 'env' (dentro de run_as, para que runuser lo
+        # propague al proceso hijo), asi makepkg imprime siempre en ingles
+        # '==> Making package: <pkg> <version> (...)', igual que pacman -Syu.
         # Extraemos el primer token tras los dos puntos (el nombre),
         # descartando version y fecha.
-        aur_pkgs=$(grep -oE '==> (Creando el paquete|Making package): [a-zA-Z0-9@._+-]+' "$CURRENT_RUN_LOG" \
-            | sed -E 's/^==> (Creando el paquete|Making package): //' | sort -u || true)
+        aur_pkgs=$(grep -oE '==> Making package: [a-zA-Z0-9@._+-]+' "$CURRENT_RUN_LOG" \
+            | sed -E 's/^==> Making package: //' | sort -u || true)
     else
         echo "(aur sync fallo, ver log)" >> "$LOG_FILE"
         aur_failed=1
@@ -150,7 +158,10 @@ fi
 echo "--- pacman -Syu ---" >> "$LOG_FILE"
 # pacman corre como root directamente (system service ya es root, o sudo
 # desde terminal eleva a root). No usa sudo dentro del script. El log
-# de esta corrida va a $CURRENT_RUN_LOG ademas del acumulado.
+# de esta corrida va a $CURRENT_RUN_LOG ademas del acumulado, y tambien
+# a $PACMAN_RUN_LOG (solo pacman, ver declaracion) para acotar el parseo
+# de mas abajo a esta seccion exclusivamente.
+: > "$PACMAN_RUN_LOG"
 # Forzamos locale C para que la salida de pacman sea siempre en ingles
 # ("upgrading"/"upgraded"), con independencia del locale del sistema
 # (p.ej. es_ES produce "actualizando"/"actualizado"). El parseo de mas
@@ -171,7 +182,7 @@ PACMAN_RETRY_WAIT=20
 PACMAN_NETWORK_FAIL_PATTERN='Could not resolve host|failed to synchronize all databases|failed to retrieve some files|Temporary failure in name resolution'
 pacman_ok=0
 for attempt in $(seq 1 "$PACMAN_MAX_ATTEMPTS"); do
-    if LC_ALL=C LANG=C pacman -Syu --noconfirm > >(tee -a "$LOG_FILE" >> "$CURRENT_RUN_LOG") 2>&1; then
+    if LC_ALL=C LANG=C pacman -Syu --noconfirm > >(tee -a "$LOG_FILE" "$PACMAN_RUN_LOG" >> "$CURRENT_RUN_LOG") 2>&1; then
         pacman_ok=1
         break
     fi
@@ -194,10 +205,12 @@ if [[ "$pacman_ok" -ne 1 ]]; then
     exit 1
 fi
 
-# ---- Parseo: SOLO sobre la corrida actual, NO sobre el log historico ----
+# ---- Parseo: SOLO sobre la seccion de pacman -Syu ($PACMAN_RUN_LOG), NO
+# sobre CURRENT_RUN_LOG (que mezcla aur sync + pacman) ni sobre el log
+# historico ----
 reboot_needed=0
-if grep -qiE 'upgrading (linux|nvidia)|upgraded (linux|nvidia)' "$CURRENT_RUN_LOG"; then reboot_needed=1; fi
-pkgs=$(grep -oE '(upgrading|upgraded) [a-zA-Z0-9@._+-]+' "$CURRENT_RUN_LOG" | sed -E 's/^(upgrading|upgraded) //; s/\.+$//' | sort -u)
+if grep -qiE 'upgrading (linux|nvidia)|upgraded (linux|nvidia)' "$PACMAN_RUN_LOG"; then reboot_needed=1; fi
+pkgs=$(grep -oE '(upgrading|upgraded) [a-zA-Z0-9@._+-]+' "$PACMAN_RUN_LOG" | sed -E 's/^(upgrading|upgraded) //; s/\.+$//' | sort -u)
 total=$(printf '%s\n' "$pkgs" | grep -c . || true)
 relevant=$(printf '%s\n' "$pkgs" | grep -iE '^(linux|nvidia|systemd|glibc|openssl|mesa|xorg-server|wayland)' || true)
 rel_count=$(printf '%s\n' "$relevant" | grep -c . || true)
@@ -248,8 +261,11 @@ elif [[ "$aur_failed" -eq 1 ]]; then
     notify normal "AUR pendiente" "$body"
     write_summary "AUR pendiente" "$body"
 else
+    # Sin cambios: NO notificamos para no generar spam de popups en cada
+    # corrida periodica del timer ni en cada lanzamiento manual desde el
+    # visor. El registro durable (write_summary) ya da visibilidad via
+    # visor/waybar; los fallos siguen notificando aparte.
     body="Sin cambios pendientes."
-    notify normal "Sistema al día" "$body"
     write_summary "Sistema al día" "$body"
 fi
 
