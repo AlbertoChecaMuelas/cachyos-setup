@@ -132,11 +132,12 @@ elif command -v aur >/dev/null 2>&1; then
     # /etc/pacman.conf). --root: ruta fisica del repo, /var/lib/aur-repo.
     if run_as timeout 1800 aur sync -u --noconfirm --no-view --no-sync -d aur-local --root "$AUR_REPO_DIR" \
             > >(tee -a "$LOG_FILE" >> "$CURRENT_RUN_LOG") 2>&1; then
-        # aur sync imprime ':: Sincronizando paquetes AUR...' seguido de
-        # ':: Starting build de <pkg>...'. Extraemos los nombres de
-        # paquetes construidos en esta corrida.
-        aur_pkgs=$(grep -oE '^:: Starting build de [a-zA-Z0-9._+-]+' "$CURRENT_RUN_LOG" \
-            | sed 's/^:: Starting build de //' | sort -u || true)
+        # makepkg imprime '==> Creando el paquete: <pkg> <version> (...)'
+        # en locale es o '==> Making package: <pkg> <version> (...)' en en.
+        # Extraemos el primer token tras los dos puntos (el nombre),
+        # descartando version y fecha.
+        aur_pkgs=$(grep -oE '==> (Creando el paquete|Making package): [a-zA-Z0-9@._+-]+' "$CURRENT_RUN_LOG" \
+            | sed -E 's/^==> (Creando el paquete|Making package): //' | sort -u || true)
     else
         echo "(aur sync fallo, ver log)" >> "$LOG_FILE"
         aur_failed=1
