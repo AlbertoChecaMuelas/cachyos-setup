@@ -34,6 +34,11 @@ y este proyecto usa [versionado semántico](https://semver.org/lang/es/).
 - README y PATH de notificaciones asumen que el script puede ejecutarse con TTY.
 
 ### Fixed
+- eliminar notificación diferida en corridas sin cambios
+- ajustes tras review — locale AUR, notificaciones y scope de parseo pacman
+- regenerar resumen en corridas sin cambios
+- parsear paquetes AUR desde makepkg en es/en
+- parsear paquetes pacman sin prefijo (N/M)
 - usar --no-sync en aur sync para evitar sudo interno sin TTY
 - reintentar pacman y endurecer guarda de red tras resume
 - corregir invocación de aur sync y parseo de pacman en locale no inglés
