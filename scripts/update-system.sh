@@ -196,7 +196,7 @@ fi
 # ---- Parseo: SOLO sobre la corrida actual, NO sobre el log historico ----
 reboot_needed=0
 if grep -qiE 'upgrading (linux|nvidia)|upgraded (linux|nvidia)' "$CURRENT_RUN_LOG"; then reboot_needed=1; fi
-pkgs=$(grep -oE '\([0-9]+/[0-9]+\) (upgrading|upgraded) [a-zA-Z0-9._+-]+' "$CURRENT_RUN_LOG" | grep -oE '[a-zA-Z0-9._+-]+$' | sort -u)
+pkgs=$(grep -oE '(upgrading|upgraded) [a-zA-Z0-9@._+-]+' "$CURRENT_RUN_LOG" | sed -E 's/^(upgrading|upgraded) //; s/\.+$//' | sort -u)
 total=$(printf '%s\n' "$pkgs" | grep -c . || true)
 relevant=$(printf '%s\n' "$pkgs" | grep -iE '^(linux|nvidia|systemd|glibc|openssl|mesa|xorg-server|wayland)' || true)
 rel_count=$(printf '%s\n' "$relevant" | grep -c . || true)
