@@ -34,6 +34,7 @@ y este proyecto usa [versionado semántico](https://semver.org/lang/es/).
 - README y PATH de notificaciones asumen que el script puede ejecutarse con TTY.
 
 ### Fixed
+- reintentar pacman y endurecer guarda de red tras resume
 - corregir invocación de aur sync y parseo de pacman en locale no inglés
 - corrige remoto mroboff->AlbertoChecaMuelas en systemd y README
 - reemplaza icono invisible del modulo cachyos-update

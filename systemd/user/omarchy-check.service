@@ -1,5 +1,8 @@
 [Unit]
 Description=Comprueba nuevas versiones de omarchy-on-cachyos
+# After/Wants=network-online.target NO protege en un disparo por resume de
+# hibernacion: ese target ya quedo "alcanzado" en el boot original y no se
+# reevalua al reanudar. La proteccion real esta en los ExecStartPre de abajo.
 After=network-online.target
 Wants=network-online.target
 
@@ -8,5 +11,13 @@ Type=oneshot
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus
 Environment=OMARCHY_DIR=%h/repos/forks/omarchy-on-cachyos
 Environment=OMARCHY_URL=https://github.com/AlbertoChecaMuelas/omarchy-on-cachyos.git
-ExecStartPre=/usr/bin/nm-online -q --timeout=60
+# nm-online -s espera a que NetworkManager termine de (re)construir la red
+# (startup-complete), evitando el falso positivo "connected" que reporta
+# brevemente tras un resume de hibernacion antes de tirar la interfaz.
+ExecStartPre=/usr/bin/nm-online -s -q --timeout=60
+# Sondea DNS real (hasta 60s) para confirmar que la red esta operativa de
+# verdad, no solo que NetworkManager la reporte "connected". Si tras 60s
+# sigue sin resolver, no aborta la unidad (exit 0): git clone/fetch del
+# script fallara igualmente pero sin marcar la unidad como error de guarda.
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do getent hosts geo.mirror.pkgbuild.com >/dev/null 2>&1 && exit 0; sleep 2; done; exit 0'
 ExecStart="@SCRIPTS_DIR@/check-omarchy-update.sh"
