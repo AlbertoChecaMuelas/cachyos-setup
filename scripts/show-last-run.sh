@@ -26,6 +26,12 @@ PKG_FILE="$STATE_DIR/last-run-packages.txt"
 # que el default debe apuntar a la ruta real del usuario.
 OMARCHY_STATE_DIR="${OMARCHY_STATE_DIR:-$HOME/.local/state/cachyos-setup}"
 OMARCHY_ENV_FILE="$OMARCHY_STATE_DIR/omarchy-check.env"
+# Directorio de modulos del kernel en ejecucion, usado para la
+# reevaluacion del flag de reinicio en tiempo de lectura. Parametrizable
+# para tests deterministicos: el valor por defecto reproduce la expresion
+# hardcodeada previa, de modo que el comportamiento de produccion no
+# cambia cuando la variable no se exporta.
+CACHYOS_MODULES_DIR="${CACHYOS_MODULES_DIR:-/usr/lib/modules/$(uname -r)}"
 # Localizacion del script de comprobacion junto al visor (mismo dir).
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHECK_OMARCHY_SCRIPT="$SCRIPTS_DIR/check-omarchy-update.sh"
@@ -66,7 +72,18 @@ render() {
     esac
     echo "Paquetes:  ${LAST_RUN_PACKAGE_COUNT:-0}"
     if [[ "${LAST_RUN_REBOOT_NEEDED:-false}" == "true" ]]; then
-      echo "Reinicio:  RECOMENDADO (kernel/nvidia actualizados)"
+      # Reevaluacion en tiempo de lectura: si el kernel en ejecucion
+      # ya esta instalado (su /usr/lib/modules existe), el reboot ya
+      # no es necesario aunque el flag durable siga "true" (escenario
+      # tipico: kernel-update + reboot ya hecho). No reescribimos
+      # last-run.env; solo recalibramos la salida visible. LIMITACION
+      # ACEPTADA: si nvidia cambio sin cambio de kernel, uname -r
+      # no varia y esta heuristica no detecta el caso.
+      if [[ -d "$CACHYOS_MODULES_DIR" ]]; then
+        echo "Reinicio:  no necesario"
+      else
+        echo "Reinicio:  RECOMENDADO (kernel/nvidia actualizados)"
+      fi
     else
       echo "Reinicio:  no necesario"
     fi

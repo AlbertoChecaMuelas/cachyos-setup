@@ -14,7 +14,6 @@ CURRENT_RUN_LOG="$STATE_DIR/current-run.log"
 # este fichero separado, esas lineas se contarian como actualizaciones
 # oficiales de pacman. Se trunca justo antes de lanzar pacman -Syu.
 PACMAN_RUN_LOG="$STATE_DIR/pacman-run.log"
-SUMMARY_FILE="$STATE_DIR/last-summary.txt"
 # Repo local donde aur sync deposita los paquetes AUR para que el
 # pacman -Syu posterior los instale. Debe coincidir con el path
 # configurado por install.sh.
@@ -40,6 +39,30 @@ export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/${EFFECTIVE_USER}}"
 export HOME="${HOME:-/home/$(id -un $EFFECTIVE_USER 2>/dev/null || echo root)}"
 
+# Derivar el home del usuario objetivo: si el proceso efectivo es
+# root, NUNCA usamos $HOME (el unit system-level tiene $HOME=/root),
+# sino el home del TARGET_USER via getent. Si corre como el propio
+# usuario objetivo, su $HOME ya es correcto. Sirve para localizar el
+# USER_STATE_DIR para el fichero efimero del summary, que debe ser
+# propiedad del usuario para que su autostart (show-update-summary.sh)
+# pueda borrarlo sin privilegios.
+TARGET_HOME=""
+if [[ "$(id -u)" -eq 0 && -n "$TARGET_USER" ]]; then
+    TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
+fi
+if [[ -z "$TARGET_HOME" ]]; then
+    TARGET_HOME="$HOME"
+fi
+# Ruta del USUARIO para el fichero efimero (last-summary.txt). Vive
+# aqui como propiedad del usuario objetivo para que su autostart
+# pueda BORRARLO sin privilegios; NO en /var/lib (donde era root:root
+# y el rm del autostart fallaba, dejando el unit transitorio en
+# 'failed' y la notificacion persistente en cada login). El registro
+# durable (STATE_DIR, last-run.env, last-run-packages.txt, logs)
+# sigue yendo a /var/lib/cachyos-setup.
+USER_STATE_DIR="$TARGET_HOME/.local/state/cachyos-setup"
+SUMMARY_FILE="$USER_STATE_DIR/last-summary.txt"
+
 notify() {
     # notify-send puede fallar por DBUS roto o socket perdido; lo
     # tratamos como best-effort, no abortamos.
@@ -57,15 +80,28 @@ write_summary() {
     # script de autostart.
     local title="$1"
     local body="$2"
+    # Auto-migracion/self-heal: en versiones previas el summary se
+    # escribia en /var/lib/cachyos-setup como root:root, lo que dejaba
+    # el autostart del usuario sin permisos para borrarlo y provocaba
+    # una notificacion persistente en cada login. Purgamos best-effort
+    # el residual en cada corrida del flujo de summary (este proceso
+    # corre con privilegios, no hace falta run_as). || true para no
+    # abortar si el fichero no existe.
+    # Ruta legada fija: ubicacion conocida donde la version antigua (con el bug) escribia el resumen como root:root. NO se deriva de $STATE_DIR a proposito, porque el resumen actual vive en USER_STATE_DIR y STATE_DIR no siempre es /var/lib/cachyos-setup.
+    rm -f /var/lib/cachyos-setup/last-summary.txt 2>/dev/null || true
+    # Crear el dir como el usuario objetivo para que el fichero
+    # resultante sea de su propiedad (asi su autostart puede leerlo
+    # Y borrarlo sin privilegios). run_as baja al usuario cuando es
+    # root; si ya corre como el usuario objetivo, es un mkdir normal.
+    run_as mkdir -p "$USER_STATE_DIR"
+    # Escribir el contenido como el usuario objetivo para que el
+    # fichero sea de su propiedad. tee sobre la ruta del usuario via
+    # run_as evita sorpresas de quoting y mantiene permisos por
+    # defecto del usuario (no hace falta chmod 644 explicito).
     {
         printf '%s\n' "$title"
         printf '%s\n' "$body"
-    } > "$SUMMARY_FILE"
-    # El servicio system-level corre como root; el usuario que inicia
-    # sesion grafica (no root) debe poder leer este fichero para que
-    # show-update-summary.sh (autostart) lo muestre y borre. Forzar
-    # 644 explicitamente.
-    chmod 644 "$SUMMARY_FILE" 2>/dev/null || true
+    } | run_as tee "$SUMMARY_FILE" >/dev/null
 }
 
 write_last_run_record() {
