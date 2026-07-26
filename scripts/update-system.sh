@@ -87,6 +87,7 @@ write_summary() {
     # el residual en cada corrida del flujo de summary (este proceso
     # corre con privilegios, no hace falta run_as). || true para no
     # abortar si el fichero no existe.
+    # Ruta legada fija: ubicacion conocida donde la version antigua (con el bug) escribia el resumen como root:root. NO se deriva de $STATE_DIR a proposito, porque el resumen actual vive en USER_STATE_DIR y STATE_DIR no siempre es /var/lib/cachyos-setup.
     rm -f /var/lib/cachyos-setup/last-summary.txt 2>/dev/null || true
     # Crear el dir como el usuario objetivo para que el fichero
     # resultante sea de su propiedad (asi su autostart puede leerlo

@@ -9,6 +9,12 @@ set -euo pipefail
 
 STATE_DIR="${STATE_DIR:-${CACHYOS_SETUP_STATE_DIR:-/var/lib/cachyos-setup}}"
 ENV_FILE="$STATE_DIR/last-run.env"
+# Directorio de modulos del kernel en ejecucion, usado para la
+# reevaluacion del flag de reinicio en tiempo de lectura. Parametrizable
+# para tests deterministicos: el valor por defecto reproduce la expresion
+# hardcodeada previa, de modo que el comportamiento de produccion no
+# cambia cuando la variable no se exporta.
+CACHYOS_MODULES_DIR="${CACHYOS_MODULES_DIR:-/usr/lib/modules/$(uname -r)}"
 SERVICE="cachyos-update.service"
 
 run_update() {
@@ -48,7 +54,7 @@ run_update() {
       # reescribimos last-run.env. LIMITACION ACEPTADA: si nvidia
       # cambio sin cambio de kernel, uname -r no varia y esta
       # heuristica no detecta el caso.
-      if [[ -d "/usr/lib/modules/$(uname -r)" ]]; then
+      if [[ -d "$CACHYOS_MODULES_DIR" ]]; then
         echo ">>> Reinicio: no necesario (kernel en ejecucion ya instalado)."
       else
         echo ">>> Se RECOMIENDA reiniciar el sistema (kernel/nvidia actualizados)."
