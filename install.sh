@@ -122,20 +122,39 @@ if [ -f "$TARGET_HOME/.config/systemd/user/cachyos-update.timer" ]; then
     runuser -u "$TARGET_USER" -- systemctl --user daemon-reload 2>/dev/null || true
 fi
 
+# ---- Auto-migracion del bug "REINICIO necesario" persistente ----
+# En versiones previas update-system.sh escribia last-summary.txt en
+# /var/lib/cachyos-setup como root:root; el autostart del usuario
+# (uid 1000) no podia borrarlo, el unit transitorio quedaba en
+# 'failed' y la notificacion se repetia en cada login. Aqui purga-
+# mos el residual y limpiamos el estado 'failed' del unit transitorio
+# de autostart, ambos best-effort y tras la resolucion de
+# TARGET_USER/TARGET_HOME. install.sh corre con privilegios, asi que
+# el rm del residual no necesita run_as.
+rm -f /var/lib/cachyos-setup/last-summary.txt 2>/dev/null || true
+# El unit transitorio es per-user (app-cachyos\x2dupdate\x2dsummary
+# @autostart.service), asi que el reset-failed opera sobre el bus de
+# usuario del TARGET_USER, no del root que ejecuta install.sh;
+# runuser baja al uid del usuario real para que systemctl --user
+# funcione.
+runuser -u "$TARGET_USER" -- systemctl --user reset-failed 'app-cachyos\x2dupdate\x2dsummary@autostart.service' 2>/dev/null || true
+
 # ---- Autostart: mostrar resumen persistente de updates al iniciar sesion ----
 # Cuando el timer corre sin sesion grafica, las notificaciones se
-# persisten en $STATE_DIR/last-summary.txt. Este script de autostart lo
-# muestra al iniciar sesion y luego lo borra para no repetirlo.
-# El STATE_DIR debe coincidir con el del unit system-level (que fija
-# CACHYOS_SETUP_STATE_DIR=/var/lib/cachyos-setup); si no, el script
-# busca en ~/.local/state/... y nunca encuentra el summary.
+# persisten en ~$USER_STATE_DIR/last-summary.txt (state dir del
+# USUARIO objetivo, NO el del unit system-level). update-system.sh
+# lo escribe como el usuario objetivo via run_as, asi que este
+# autostart (corre como el usuario, sin privilegios) puede leerlo Y
+# borrarlo sin necesitar chmod 644 ni forzar CACHYOS_SETUP_STATE_DIR.
+# Si fueramos el env a /var/lib, el rm del autostart fallaria (el
+# fichero es root:root) y la notificacion se repetiria en cada login.
 AUTOSTART_DIR="$TARGET_HOME/.config/autostart"
 mkdir -p "$AUTOSTART_DIR"
 cat > "$AUTOSTART_DIR/cachyos-update-summary.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=CachyOS Update Summary
-Exec=env CACHYOS_SETUP_STATE_DIR=/var/lib/cachyos-setup "$SCRIPTS_DIR/show-update-summary.sh"
+Exec="$SCRIPTS_DIR/show-update-summary.sh"
 X-GNOME-Autostart-enabled=true
 NoDisplay=false
 EOF

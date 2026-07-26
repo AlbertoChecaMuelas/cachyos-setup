@@ -42,7 +42,17 @@ run_update() {
       echo "Motivo:    ${LAST_RUN_FAIL_REASON:-sin detalle}"
     fi
     if [[ "${LAST_RUN_REBOOT_NEEDED:-false}" == "true" ]]; then
-      echo ">>> Se RECOMIENDA reiniciar el sistema (kernel/nvidia actualizados)."
+      # Reevaluacion en tiempo de lectura: si el kernel en ejecucion
+      # ya esta instalado (su /usr/lib/modules existe), el reboot ya
+      # no es necesario aunque el flag durable siga "true". No
+      # reescribimos last-run.env. LIMITACION ACEPTADA: si nvidia
+      # cambio sin cambio de kernel, uname -r no varia y esta
+      # heuristica no detecta el caso.
+      if [[ -d "/usr/lib/modules/$(uname -r)" ]]; then
+        echo ">>> Reinicio: no necesario (kernel en ejecucion ya instalado)."
+      else
+        echo ">>> Se RECOMIENDA reiniciar el sistema (kernel/nvidia actualizados)."
+      fi
     fi
   fi
   # Pausa final solo cuando NO lo invoca el visor (que prefiere

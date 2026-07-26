@@ -66,7 +66,18 @@ render() {
     esac
     echo "Paquetes:  ${LAST_RUN_PACKAGE_COUNT:-0}"
     if [[ "${LAST_RUN_REBOOT_NEEDED:-false}" == "true" ]]; then
-      echo "Reinicio:  RECOMENDADO (kernel/nvidia actualizados)"
+      # Reevaluacion en tiempo de lectura: si el kernel en ejecucion
+      # ya esta instalado (su /usr/lib/modules existe), el reboot ya
+      # no es necesario aunque el flag durable siga "true" (escenario
+      # tipico: kernel-update + reboot ya hecho). No reescribimos
+      # last-run.env; solo recalibramos la salida visible. LIMITACION
+      # ACEPTADA: si nvidia cambio sin cambio de kernel, uname -r
+      # no varia y esta heuristica no detecta el caso.
+      if [[ -d "/usr/lib/modules/$(uname -r)" ]]; then
+        echo "Reinicio:  no necesario"
+      else
+        echo "Reinicio:  RECOMENDADO (kernel/nvidia actualizados)"
+      fi
     else
       echo "Reinicio:  no necesario"
     fi
