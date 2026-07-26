@@ -24,6 +24,7 @@ y este proyecto usa [versionado semántico](https://semver.org/lang/es/).
 - **Resumen persistente** (`$STATE_DIR/last-summary.txt`) escrito SIEMPRE al final de la corrida, con independencia de si `notify-send` tuvo exito. Un script de autostart (`scripts/show-update-summary.sh`) lo muestra al iniciar sesion grafica y luego lo borra.
 
 ### Changed
+- parametrizar CACHYOS_MODULES_DIR y documentar ruta legada
 - elimina var muerta, simplifica condicion y restringe teclas del visor
 - tooltip y README para estado y comprobación de omarchy
 - `cachyos-update.{service,timer}` pasa a ser **system-level** (corre como root desde `/etc/systemd/system/`) en lugar de user-level. Esto evita el problema PAM/sudo/TTY que bloqueaba la automatizacion en algunos sistemas.
@@ -34,6 +35,7 @@ y este proyecto usa [versionado semántico](https://semver.org/lang/es/).
 - README y PATH de notificaciones asumen que el script puede ejecutarse con TTY.
 
 ### Fixed
+- reubicar summary efímero al state dir del usuario
 - eliminar notificación diferida en corridas sin cambios
 - ajustes tras review — locale AUR, notificaciones y scope de parseo pacman
 - regenerar resumen en corridas sin cambios
