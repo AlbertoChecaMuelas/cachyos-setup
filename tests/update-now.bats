@@ -49,6 +49,7 @@ run_update_now() {
     STATE_DIR="$STATE_DIR" \
     JOURNAL_PID_FILE="$JOURNAL_PID_FILE" \
     PKEXEC_EXIT_CODE="$1" \
+    CACHYOS_MODULES_DIR="${CACHYOS_MODULES_DIR:-}" \
     CACHYOS_INLINE=1 \
     bash -c "echo | bash '$SCRIPT'"
 }
@@ -104,6 +105,42 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"Resultado: partial"* ]]
   [[ "$output" == *"Motivo:    AUR no actualizado (ver log)"* ]]
+}
+
+@test "reboot re-evaluation: LAST_RUN_REBOOT_NEEDED=true but the running kernel's modules dir exists -> reboot no longer needed" {
+  cat > "$STATE_DIR/last-run.env" << 'EOF'
+LAST_RUN_TIMESTAMP="2026-07-15T10:15:00"
+LAST_RUN_RESULT="success"
+LAST_RUN_FAIL_REASON=""
+LAST_RUN_REBOOT_NEEDED="true"
+LAST_RUN_PACKAGE_COUNT="6"
+EOF
+
+  CACHYOS_MODULES_DIR="$BATS_TEST_TMPDIR/modules-installed"
+  mkdir -p "$CACHYOS_MODULES_DIR"
+
+  run run_update_now 0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *">>> Reinicio: no necesario (kernel en ejecucion ya instalado)."* ]]
+  [[ "$output" != *"RECOMIENDA"* ]]
+}
+
+@test "reboot re-evaluation: LAST_RUN_REBOOT_NEEDED=true and the running kernel's modules dir is gone -> reboot still recommended" {
+  cat > "$STATE_DIR/last-run.env" << 'EOF'
+LAST_RUN_TIMESTAMP="2026-07-15T10:20:00"
+LAST_RUN_RESULT="success"
+LAST_RUN_FAIL_REASON=""
+LAST_RUN_REBOOT_NEEDED="true"
+LAST_RUN_PACKAGE_COUNT="6"
+EOF
+
+  # Deliberately not created: simulates a running kernel that is no
+  # longer installed (kernel/nvidia updated, reboot still pending).
+  CACHYOS_MODULES_DIR="$BATS_TEST_TMPDIR/modules-not-installed"
+
+  run run_update_now 0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *">>> Se RECOMIENDA reiniciar el sistema (kernel/nvidia actualizados)."* ]]
 }
 
 @test "CACHYOS_SKIP_PAUSE=1 skips the final pause: exits 0 even with stdin closed" {

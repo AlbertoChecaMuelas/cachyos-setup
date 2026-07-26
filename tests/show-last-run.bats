@@ -33,7 +33,9 @@ make_repo() {
 }
 
 run_show() {
-  STATE_DIR="$STATE_DIR" OMARCHY_STATE_DIR="$OMARCHY_STATE_DIR" CACHYOS_INLINE=1 bash -c "echo | bash '$SCRIPT'"
+  STATE_DIR="$STATE_DIR" OMARCHY_STATE_DIR="$OMARCHY_STATE_DIR" \
+    CACHYOS_MODULES_DIR="${CACHYOS_MODULES_DIR:-}" \
+    CACHYOS_INLINE=1 bash -c "echo | bash '$SCRIPT'"
 }
 
 @test "no record yet: informs the user without erroring" {
@@ -88,6 +90,42 @@ EOF
   [[ "$output" == *"Motivo:    pacman -Syu fallo"* ]]
   # Must not be confused with the partial-specific wording.
   [[ "$output" != *"pacman OK, AUR falló"* ]]
+}
+
+@test "reboot re-evaluation: LAST_RUN_REBOOT_NEEDED=true but the running kernel's modules dir exists -> reboot no longer needed" {
+  cat > "$STATE_DIR/last-run.env" << 'EOF'
+LAST_RUN_TIMESTAMP="2026-07-15T09:30:00"
+LAST_RUN_RESULT="success"
+LAST_RUN_FAIL_REASON=""
+LAST_RUN_REBOOT_NEEDED="true"
+LAST_RUN_PACKAGE_COUNT="5"
+EOF
+
+  CACHYOS_MODULES_DIR="$BATS_TEST_TMPDIR/modules-installed"
+  mkdir -p "$CACHYOS_MODULES_DIR"
+
+  run run_show
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Reinicio:  no necesario"* ]]
+  [[ "$output" != *"RECOMENDADO"* ]]
+}
+
+@test "reboot re-evaluation: LAST_RUN_REBOOT_NEEDED=true and the running kernel's modules dir is gone -> reboot still recommended" {
+  cat > "$STATE_DIR/last-run.env" << 'EOF'
+LAST_RUN_TIMESTAMP="2026-07-15T09:35:00"
+LAST_RUN_RESULT="success"
+LAST_RUN_FAIL_REASON=""
+LAST_RUN_REBOOT_NEEDED="true"
+LAST_RUN_PACKAGE_COUNT="5"
+EOF
+
+  # Deliberately not created: simulates a running kernel that is no
+  # longer installed (kernel/nvidia updated, reboot still pending).
+  CACHYOS_MODULES_DIR="$BATS_TEST_TMPDIR/modules-not-installed"
+
+  run run_show
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Reinicio:  RECOMENDADO (kernel/nvidia actualizados)"* ]]
 }
 
 @test "omarchy section: no state file yet informs it hasn't been checked" {
