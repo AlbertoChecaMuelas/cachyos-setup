@@ -216,6 +216,40 @@ PACMAN_RETRY_WAIT=20
 # motivo como conectividad en vez de como error real de pacman, para no
 # confundir al usuario.
 PACMAN_NETWORK_FAIL_PATTERN='Could not resolve host|failed to synchronize all databases|failed to retrieve some files|Temporary failure in name resolution'
+# Patron especifico de fallo por lock de la base de datos de pacman. Debe
+# evaluarse ANTES que PACMAN_NETWORK_FAIL_PATTERN, porque el mensaje real
+# ("failed to synchronize all databases (unable to lock database)") tambien
+# casa con el patron de red y se clasificaria erroneamente como conectividad.
+PACMAN_LOCK_FAIL_PATTERN='unable to lock database'
+# ---- Guarda contra lock huerfano de pacman ----
+# Un pacman muerto o una corrida previa interrumpida puede dejar
+# /var/lib/pacman/db.lck sin borrar. Si ese lock queda huerfano (ningun
+# proceso pacman vivo lo usa), pacman -Syu falla en todos los reintentos
+# con "unable to lock database" hasta que alguien lo borra a mano. Lo
+# detectamos y limpiamos automaticamente. Si el lock SI esta en uso por un
+# proceso vivo, NO lo tocamos: borrarlo bajo un pacman activo podria
+# corromper la base de datos.
+PACMAN_LOCK="/var/lib/pacman/db.lck"
+if [[ -e "$PACMAN_LOCK" ]]; then
+    lock_in_use=0
+    # fuser detecta si algun proceso mantiene el fichero abierto (fd).
+    if command -v fuser >/dev/null 2>&1 && fuser "$PACMAN_LOCK" >/dev/null 2>&1; then
+        lock_in_use=1
+    fi
+    # Red de seguridad: pacman crea db.lck pero puede no mantener un fd
+    # abierto sobre el, asi que comprobamos ademas si hay un proceso pacman
+    # vivo. Conservador: si CUALQUIERA de las dos senales indica uso, no
+    # borramos.
+    if pgrep -x pacman >/dev/null 2>&1; then
+        lock_in_use=1
+    fi
+    if [[ "$lock_in_use" -eq 1 ]]; then
+        echo "(lock de pacman $PACMAN_LOCK en uso por un proceso vivo; no se toca)" >> "$LOG_FILE"
+    else
+        echo "(lock huerfano de pacman detectado en $PACMAN_LOCK; borrando antes de reintentar)" >> "$LOG_FILE"
+        rm -f "$PACMAN_LOCK" 2>/dev/null || true
+    fi
+fi
 pacman_ok=0
 for attempt in $(seq 1 "$PACMAN_MAX_ATTEMPTS"); do
     if LC_ALL=C LANG=C pacman -Syu --noconfirm > >(tee -a "$LOG_FILE" "$PACMAN_RUN_LOG" >> "$CURRENT_RUN_LOG") 2>&1; then
@@ -229,7 +263,11 @@ for attempt in $(seq 1 "$PACMAN_MAX_ATTEMPTS"); do
 done
 
 if [[ "$pacman_ok" -ne 1 ]]; then
-    if grep -qiE "$PACMAN_NETWORK_FAIL_PATTERN" "$CURRENT_RUN_LOG"; then
+    if grep -qiE "$PACMAN_LOCK_FAIL_PATTERN" "$CURRENT_RUN_LOG"; then
+        notify critical "Error al actualizar (pacman): base de datos bloqueada" "No se pudo bloquear la base de datos de pacman tras $PACMAN_MAX_ATTEMPTS intentos. Revisa $LOG_FILE"
+        write_summary "Error al actualizar (pacman): base de datos bloqueada" "No se pudo bloquear la base de datos de pacman tras $PACMAN_MAX_ATTEMPTS intentos. Revisa $LOG_FILE"
+        write_last_run_record "failure" "pacman -Syu fallo (base de datos bloqueada)" "false" "0" ""
+    elif grep -qiE "$PACMAN_NETWORK_FAIL_PATTERN" "$CURRENT_RUN_LOG"; then
         notify critical "Error de red al actualizar (pacman)" "Fallo de conectividad tras $PACMAN_MAX_ATTEMPTS intentos. Revisa $LOG_FILE"
         write_summary "Error de red al actualizar (pacman)" "Fallo de conectividad tras $PACMAN_MAX_ATTEMPTS intentos. Revisa $LOG_FILE"
         write_last_run_record "failure" "pacman -Syu fallo (red/DNS)" "false" "0" ""
