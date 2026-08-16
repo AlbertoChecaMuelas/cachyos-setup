@@ -35,6 +35,7 @@ y este proyecto usa [versionado semántico](https://semver.org/lang/es/).
 - README y PATH de notificaciones asumen que el script puede ejecutarse con TTY.
 
 ### Fixed
+- limpiar lock huerfano y clasificar db locked
 - reubicar summary efímero al state dir del usuario
 - eliminar notificación diferida en corridas sin cambios
 - ajustes tras review — locale AUR, notificaciones y scope de parseo pacman
