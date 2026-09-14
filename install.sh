@@ -187,106 +187,122 @@ waybar_backup_once() {
 
 # Helper: inserta (o reemplaza) un bloque delimitado por marcadores.
 #   $1=snippet_path $2=target_path $3=open_marker $4=close_marker
-#   $5=before_pattern (regex awk; vacio = append al final).
+#   $5=before_pattern (regex; vacio = append al final).
+#
+# Implementacion en python inline (no awk) porque awk interpreta las
+# secuencias \n dentro de `-v block=...` como saltos de linea reales al
+# escribirlas, dejando el JSONC malformado cuando el snippet contiene
+# strings con \n literales (p.ej. el tooltip-format del modulo
+# custom/cachyos-update). Python lee el snippet como bytes raw y los
+# escribe verbatim, preservando \n como dos caracteres (backslash + n).
 waybar_merge_block() {
     local snippet="$1" target="$2" open_m="$3" close_m="$4" before_pat="${5:-}"
     [[ -f "$target" ]] || return 1
-    local block
-    block=$(cat "$snippet")
-    if grep -qF -- "$open_m" "$target"; then
-        # Marcadores presentes: reemplazar el contenido entre ellos.
-        awk \
-            -v open_m="$open_m" -v close_m="$close_m" -v block="$block" \
-            'BEGIN { in_block = 0 }
-             index($0, open_m)  { print open_m; print block; in_block = 1; next }
-             index($0, close_m)  { print close_m; in_block = 0; next }
-             in_block            { next }
-                                { print }' \
-            "$target" > "${target}.new" && mv "${target}.new" "$target"
-    else
-        # Sin marcadores: insertar antes del patron. Si el patron
-        # esta vacio, no hay punto de insercion claro: append al
-        # final via bloque END.
-        awk \
-            -v before="$before_pat" -v open_m="$open_m" -v close_m="$close_m" -v block="$block" \
-            'BEGIN { inserted = 0; prev = "" }
-             {
-                 if (!inserted && before != "" && $0 ~ before) {
-                     # Insertamos aqui. Si la linea previa es el ultimo
-                     # miembro del nivel superior y NO termina ya en
-                     # coma, anyadimos coma para mantener JSON valido
-                     # al meter el nuevo bloque como hermano.
-                     # Casos que NECESITAN coma (valor cerrado, no
-                     # apertura):
-                     #   }  cierre de objeto
-                     #   ]  cierre de array
-                     #   "  fin de string escalar (p.ej. "format": "")
-                     #   0-9  fin de numero escalar (p.ej. "height": 30)
-                     #   true/false/null  fin de literal
-                     # Casos que NO la necesitan:
-                     #   ,  ya tiene coma
-                     #   { o [  apertura de un nuevo contenedor
-                     #   linea de comentario // ...
-                     rtrim = prev
-                     sub(/[[:space:]]+$/, "", rtrim)
-                     # Si la linea previa lleva un comentario inline
-                     # // ... al final (p.ej. `"height": 30 // px`),
-                     # recortarlo SOLO para la decision de coma. El
-                     # comentario original NO se modifica en la salida:
-                     # el contenido escrito sigue siendo prev intacto.
-                     sub(/[[:space:]]+\/\/.*$/, "", rtrim)
-                     needs_comma = 0
-                     if (rtrim != "" \
-                         && rtrim !~ /^[[:space:]]*\/\// \
-                         && rtrim !~ /,$/ \
-                         && (rtrim ~ /\}$/ || rtrim ~ /\]$/ \
-                             || rtrim ~ /"$/ \
-                             || rtrim ~ /[0-9]$/ \
-                             || rtrim ~ /(true|false|null)$/)) {
-                         needs_comma = 1
-                     }
-                     if (needs_comma) {
-                         # Insertar la coma en el offset del contenido
-                         # real (el mismo usado para construir rtrim
-                         # arriba), NO al final absoluto de prev. Asi,
-                         # si la linea lleva un comentario inline
-                         # (p.ej. `"height": 30 // px`), la coma cae
-                         # tras el contenido (`30`) y el comentario
-                         # queda intacto a continuacion: `30, // px`.
-                         # Sin comentario, el offset coincide con el
-                         # final del contenido y el resultado es
-                         # equivalente al previo.
-                         split_pos = length(rtrim)
-                         prev = substr(prev, 1, split_pos) "," substr(prev, split_pos + 1)
-                     }
-                     print prev
-                     print open_m
-                     print block
-                     print close_m
-                     print ""
-                     prev = $0
-                     inserted = 1
-                     next
-                 }
-                 if (!inserted) {
-                     if (prev != "") print prev
-                     prev = $0
-                 } else {
-                     print
-                 }
-             }
-             END {
-                 if (!inserted) {
-                     if (prev != "") print prev
-                     print open_m
-                     print block
-                     print close_m
-                 } else {
-                     print prev
-                 }
-             }' \
-            "$target" > "${target}.new" && mv "${target}.new" "$target"
-    fi
+    python3 - "$snippet" "$target" "$open_m" "$close_m" "$before_pat" <<'PYEOF'
+import sys, re, os, stat
+
+snippet_path, target, open_m, close_m = sys.argv[1:5]
+before_pat = sys.argv[5] if len(sys.argv) > 5 else ""
+
+with open(snippet_path, "r") as f:
+    # Bloque crudo: '\n' literales (dos chars) en el JSONC se conservan
+    # como dos chars aqui; no los tocamos.
+    block = f.read()
+
+with open(target, "r") as f:
+    text = f.read()
+
+# Trabajamos linea a linea reproduciendo la semantica del awk original.
+lines = text.split("\n")
+
+if open_m in text:
+    # Marcadores presentes: reemplazar contenido entre open_m y close_m.
+    in_block = False
+    out = []
+    for line in lines:
+        if open_m in line:
+            out.append(line)
+            out.append(block)
+            in_block = True
+            continue
+        if close_m in line:
+            out.append(line)
+            in_block = False
+            continue
+        if in_block:
+            continue
+        out.append(line)
+    new_text = "\n".join(out)
+else:
+    # Sin marcadores: insertar antes del patron; si patron vacio,
+    # append al final (via rama END equivalente).
+    before_re = re.compile(before_pat) if before_pat else None
+    inserted = False
+    prev = ""
+    out = []
+    for line in lines:
+        if not inserted and before_re is not None and before_re.search(line):
+            rtrim = prev.rstrip()
+            # Si la linea previa lleva un comentario inline `// ...`
+            # al final (p.ej. `"height": 30 // px`), recortarlo SOLO
+            # para la decision de coma. El comentario original NO se
+            # modifica en la salida: el contenido escrito sigue siendo
+            # `prev` intacto.
+            rtrim_dec = re.sub(r"\s+//.*$", "", rtrim)
+            needs_comma = False
+            if rtrim_dec \
+                    and not rtrim_dec.lstrip().startswith("//") \
+                    and not rtrim_dec.endswith(",") \
+                    and (rtrim_dec.endswith("}")
+                         or rtrim_dec.endswith("]")
+                         or rtrim_dec.endswith('"')
+                         or re.search(r"[0-9]$", rtrim_dec)
+                         or re.search(r"(true|false|null)$", rtrim_dec)):
+                needs_comma = True
+            if needs_comma:
+                # Insertar la coma en el offset del contenido real
+                # (el mismo usado para construir rtrim_dec arriba),
+                # NO al final absoluto de prev. Asi, si la linea lleva
+                # un comentario inline (`"height": 30 // px`), la coma
+                # cae tras el contenido (`30`) y el comentario queda
+                # intacto a continuacion: `30, // px`. Sin comentario,
+                # el offset coincide con el final del contenido y el
+                # resultado es equivalente al previo.
+                split_pos = len(rtrim_dec)
+                prev = prev[:split_pos] + "," + prev[split_pos:]
+            out.append(prev)
+            out.append(open_m)
+            out.append(block)
+            out.append(close_m)
+            out.append("")
+            prev = line
+            inserted = True
+            continue
+        if not inserted:
+            if prev:
+                out.append(prev)
+            prev = line
+        else:
+            out.append(line)
+    if not inserted:
+        if prev:
+            out.append(prev)
+        out.append(open_m)
+        out.append(block)
+        out.append(close_m)
+    else:
+        out.append(prev)
+    new_text = "\n".join(out)
+
+# Preservar el modo del archivo destino (no lo cambia el rename atomico
+# que hace os.replace si creamos un .new con permisos por defecto).
+mode = stat.S_IMODE(os.stat(target).st_mode)
+tmp = target + ".new"
+with open(tmp, "w") as f:
+    f.write(new_text)
+os.chmod(tmp, mode)
+os.replace(tmp, target)
+PYEOF
 }
 
 # Helper: anade un nombre al array modules-right si la clave existe y
